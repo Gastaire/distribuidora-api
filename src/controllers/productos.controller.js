@@ -1,8 +1,8 @@
-const db = require('../db'); // Asegúrate de que esta línea esté al inicio
+const db = require('../db');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 
-// OBTENER TODOS los productos
+// OBTENER TODOS los productos (Sin cambios)
 const getProductos = async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM productos ORDER BY nombre ASC');
@@ -13,7 +13,7 @@ const getProductos = async (req, res) => {
   }
 };
 
-// OBTENER UN SOLO producto por ID
+// OBTENER UN SOLO producto por ID (Sin cambios)
 const getProductoById = async (req, res) => {
   const { id } = req.params;
   try {
@@ -28,9 +28,8 @@ const getProductoById = async (req, res) => {
   }
 };
 
-// CREAR un nuevo producto (versión actualizada)
+// CREAR un nuevo producto (Sin cambios)
 const createProducto = async (req, res) => {
-  // Añadimos imagen_url
   const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
   try {
     const { rows } = await db.query(
@@ -44,10 +43,9 @@ const createProducto = async (req, res) => {
   }
 };
 
-// ACTUALIZAR un producto existente (versión actualizada)
+// ACTUALIZAR un producto existente (Sin cambios)
 const updateProducto = async (req, res) => {
   const { id } = req.params;
-  // Añadimos imagen_url
   const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
   try {
     const { rows } = await db.query(
@@ -64,7 +62,7 @@ const updateProducto = async (req, res) => {
   }
 };
 
-// ELIMINAR un producto
+// ELIMINAR un producto (Sin cambios)
 const deleteProducto = async (req, res) => {
   const { id } = req.params;
   try {
@@ -72,56 +70,90 @@ const deleteProducto = async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Producto no encontrado' });
     }
-    res.status(204).send(); // 204 No Content: éxito, pero no hay nada que devolver
+    res.status(204).send();
   } catch (error) {
     console.error(`Error al eliminar producto ${id}:`, error);
     res.status(500).json({ message: 'Error interno del servidor' });
   }
 };
 
-// **VERSIÓN CORREGIDA** para importar productos desde CSV
+// **FUNCIÓN DE IMPORTACIÓN REFINADA**
 const importProductos = async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'No se ha subido ningún archivo.' });
     }
 
-    const results = [];
+    const resultados = [];
+    const filasConError = [];
+    let numeroFila = 1; // Para reportar errores
+
     const stream = Readable.from(req.file.buffer.toString('utf8'));
 
     stream
         .pipe(csv({
-            mapHeaders: ({ header }) => header.trim()
+            // Mapea los nombres de tu CSV a los nombres de nuestra DB
+            mapHeaders: ({ header }) => {
+                const headerTrimmed = header.trim().toLowerCase();
+                if (headerTrimmed === 'a_cod') return 'codigo_sku';
+                if (headerTrimmed === 'a_det') return 'nombre';
+                if (headerTrimmed === 'a_plis1') return 'precio_unitario';
+                return null; // Ignora otras columnas
+            }
         }))
-        .on('data', (data) => results.push(data))
+        .on('data', (data) => {
+            numeroFila++;
+            // Validar que los datos esenciales existen
+            if (!data.codigo_sku || !data.nombre || data.precio_unitario === undefined || data.precio_unitario === '') {
+                filasConError.push({ fila: numeroFila, error: 'Faltan datos esenciales (SKU, Nombre o Precio).', data: JSON.stringify(data) });
+            } else if (isNaN(parseFloat(data.precio_unitario))) {
+                filasConError.push({ fila: numeroFila, error: 'El precio no es un número válido.', data: JSON.stringify(data) });
+            } else {
+                resultados.push(data);
+            }
+        })
         .on('end', async () => {
-            // **CORRECCIÓN:** Accedemos a la pool a través del objeto 'db' importado
             const client = await db.pool.connect();
+            let creados = 0;
+            let actualizados = 0;
+
             try {
                 await client.query('BEGIN');
-                let importedCount = 0;
-                for (const row of results) {
-                    const sku = row.codigo_sku || null;
-                    const nombre = row.nombre;
-                    const precio = Math.round(parseFloat(row.precio_unitario));
 
-                    if (!nombre || isNaN(precio)) {
-                        console.warn('Fila omitida por datos inválidos:', row);
-                        continue;
+                for (const row of resultados) {
+                    const sku = String(row.codigo_sku).trim();
+                    const nombre = String(row.nombre).trim();
+                    const precio = parseFloat(row.precio_unitario);
+
+                    // Busca si el producto ya existe
+                    const productoExistente = await client.query('SELECT id FROM productos WHERE codigo_sku = $1', [sku]);
+
+                    if (productoExistente.rows.length > 0) {
+                        // Si existe, actualízalo
+                        await client.query(
+                            'UPDATE productos SET nombre = $1, precio_unitario = $2, stock = $3 WHERE codigo_sku = $4',
+                            [nombre, Math.round(precio), 'Sí', sku]
+                        );
+                        actualizados++;
+                    } else {
+                        // Si no existe, créalo
+                        await client.query(
+                            'INSERT INTO productos (codigo_sku, nombre, precio_unitario, stock) VALUES ($1, $2, $3, $4)',
+                            [sku, nombre, Math.round(precio), 'Sí']
+                        );
+                        creados++;
                     }
-
-                    const query = `
-                        INSERT INTO productos (codigo_sku, nombre, precio_unitario, stock)
-                        VALUES ($1, $2, $3, 'Sí')
-                        ON CONFLICT (codigo_sku) DO UPDATE SET
-                            nombre = EXCLUDED.nombre,
-                            precio_unitario = EXCLUDED.precio_unitario,
-                            stock = 'Sí'
-                    `;
-                    await client.query(query, [sku, nombre, precio]);
-                    importedCount++;
                 }
+                
                 await client.query('COMMIT');
-                res.status(200).json({ message: `${importedCount} productos importados/actualizados exitosamente.` });
+                
+                res.status(200).json({
+                    message: `Importación completada.`,
+                    creados: creados,
+                    actualizados: actualizados,
+                    filasOmitidas: filasConError.length,
+                    errores: filasConError
+                });
+
             } catch (error) {
                 await client.query('ROLLBACK');
                 console.error('Error durante la importación de CSV:', error);
