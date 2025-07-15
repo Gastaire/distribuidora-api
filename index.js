@@ -2,13 +2,13 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
+// Rutas que sí existen en tu proyecto
 const productoRoutes = require('./src/routes/productos.routes');
 const clienteRoutes = require('./src/routes/clientes.routes');
 const authRoutes = require('./src/routes/auth.routes');
 const pedidoItemsRoutes = require('./src/routes/pedido_items.routes');
 const pedidoRoutes = require('./src/routes/pedidos.routes');
-const logRoutes = require('./src/routes/logs.routes'); // <-- AÑADIDO
-const preciosRoutes = require('./src/routes/precios.routes');
+const logRoutes = require('./src/routes/logs.routes');
 
 const app = express();
 const PORT = process.env.API_PORT || 4000;
@@ -33,14 +33,13 @@ app.get('/', (req, res) => {
   res.json(debugEnv);
 });
 
-// Rutas de la API
+// Usar las rutas de la API
 app.use('/api', authRoutes);
 app.use('/api', pedidoRoutes);
 app.use('/api', pedidoItemsRoutes);
 app.use('/api', productoRoutes);
 app.use('/api', clienteRoutes);
-app.use('/api', logRoutes); // <-- AÑADIDO
-app.use('/api', preciosRoutes);
+app.use('/api', logRoutes);
 
 
 // Iniciar el servidor
