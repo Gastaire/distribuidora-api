@@ -1,5 +1,6 @@
+const cors = require('cors');
+require('dotenv').config();
 
-// Rutas que sí existen en tu proyecto
 // Rutas
 const productoRoutes = require('./src/routes/productos.routes');
 const clienteRoutes = require('./src/routes/clientes.routes');
