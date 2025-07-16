@@ -31,36 +31,30 @@ const register = async (req, res) => {
   }
 };
 
-// INICIAR SESIÓN
+// INICIAR SESIÓN (CORREGIDO)
 const login = async (req, res) => {
   const { email, password } = req.body;
-
   try {
-    // Buscar usuario por email
     const { rows } = await db.query('SELECT * FROM usuarios WHERE email = $1', [email]);
     const user = rows[0];
-
     if (!user) {
-      return res.status(401).json({ message: 'Credenciales inválidas' }); // Mensaje genérico por seguridad
+      return res.status(401).json({ message: 'Credenciales inválidas' });
     }
-
-    // Comparar contraseña
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: 'Credenciales inválidas' });
     }
 
-    // Crear el token JWT
+    // CORRECCIÓN: Añadimos el nombre del usuario al "pasaporte" (token)
     const payload = {
       user: {
         id: user.id,
         rol: user.rol,
+        nombre: user.nombre // <-- AÑADIDO
       },
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn: '7d', // El token expirará en 7 días
-    });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       message: 'Inicio de sesión exitoso',
