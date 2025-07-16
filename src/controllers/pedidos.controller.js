@@ -251,6 +251,83 @@ const updatePedidoEstado = async (req, res) => {
     }
 };
 
+const archivePedido = async (req, res) => {
+    const { id } = req.params;
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Actualizamos el estado del pedido a 'archivado'
+        const result = await client.query(
+            "UPDATE pedidos SET estado = 'archivado' WHERE id = $1 RETURNING id",
+            [id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: 'Pedido no encontrado' });
+        }
+
+        // Creamos el registro en la tabla de actividad
+        const logDetail = `El usuario ${nombre_usuario} archivó el pedido #${id}.`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'ARCHIVAR_PEDIDO', logDetail]
+        );
+
+        await client.query('COMMIT');
+        res.status(200).json({ message: 'Pedido archivado correctamente.' });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`Error al archivar el pedido ${id}:`, error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    } finally {
+        client.release();
+    }
+};
+
+const cleanupArchivedPedidos = async (req, res) => {
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Obtenemos los IDs de todos los pedidos archivados
+        const archivedPedidos = await client.query("SELECT id FROM pedidos WHERE estado = 'archivado'");
+        
+        if (archivedPedidos.rows.length === 0) {
+            return res.status(200).json({ message: 'No hay pedidos archivados para eliminar.' });
+        }
+        
+        const archivedIds = archivedPedidos.rows.map(p => p.id);
+
+        // Eliminamos primero los items de esos pedidos (por la clave foránea)
+        await client.query('DELETE FROM pedido_items WHERE pedido_id = ANY($1::int[])', [archivedIds]);
+        
+        // Ahora eliminamos los pedidos
+        const deleteResult = await client.query('DELETE FROM pedidos WHERE id = ANY($1::int[])', [archivedIds]);
+
+        // Creamos el registro de la limpieza
+        const logDetail = `El usuario ${nombre_usuario} eliminó permanentemente ${deleteResult.rowCount} pedido(s) archivado(s).`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'LIMPIAR_ARCHIVADOS', logDetail]
+        );
+        
+        await client.query('COMMIT');
+        res.status(200).json({ message: `${deleteResult.rowCount} pedido(s) archivado(s) han sido eliminados.` });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error durante la limpieza de pedidos archivados:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    } finally {
+        client.release();
+    }
+};
 
 module.exports = {
     createPedido,
