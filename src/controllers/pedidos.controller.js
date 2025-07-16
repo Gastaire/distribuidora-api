@@ -365,5 +365,5 @@ module.exports = {
     updatePedidoEstado,
     archivePedido,          // <-- AÑADIR ESTA LÍNEA
     cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
-    unarchivePedidos
+    unarchivePedido
 };
