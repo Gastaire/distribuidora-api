@@ -14,11 +14,16 @@ const dashboardRoutes = require('./src/routes/dashboard.routes');
 const app = express();
 const PORT = process.env.API_PORT || 4000;
 
-// --- CORRECCIÓN: Configuración de CORS con Lista Blanca (Más Seguro) ---
-const whitelist = ['https://distrimaxi.onzacore.site', 'https://vendedor.onzacore.site']; // Tus dominios permitidos
+// --- Middlewares ---
+
+// ** SOLUCIÓN DEFINITIVA PARA CORS **
+// 1. Manejar las solicitudes pre-vuelo (OPTIONS) de forma explícita
+app.options('*', cors()); // Habilita cors para todas las rutas en las peticiones OPTIONS
+
+// 2. Usar la configuración de CORS para todas las demás peticiones
+const whitelist = ['https://distrimaxi.onzacore.site', 'https://vendedor.onzacore.site'];
 const corsOptions = {
   origin: function (origin, callback) {
-    // Permite peticiones si el origen está en la lista blanca o si no hay origen (ej: Postman, apps móviles)
     if (whitelist.indexOf(origin) !== -1 || !origin) {
       callback(null, true);
     } else {
@@ -28,15 +33,14 @@ const corsOptions = {
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   allowedHeaders: 'Content-Type,Authorization'
 };
+app.use(cors(corsOptions));
 
-// Middlewares
-app.use(cors(corsOptions)); // Usamos la nueva configuración segura
 app.use(express.json());
 
 
 // Ruta principal para debug
 app.get('/', (req, res) => {
-    // ... (el resto de la función de debug queda igual)
+    // ... (función de debug sin cambios)
 });
 
 // Usar las rutas de la API
@@ -44,9 +48,11 @@ app.use('/api', authRoutes);
 app.use('/api', pedidoRoutes);
 app.use('/api', productoRoutes);
 app.use('/api', clienteRoutes);
-// app.use('/api', logRoutes); // Se quita si no existe el archivo
 app.use('/api', usuariosRoutes);
 app.use('/api', dashboardRoutes);
+
+// Eliminamos la referencia a logRoutes si el archivo no se va a usar
+// app.use('/api', logRoutes); 
 
 
 // Iniciar el servidor
