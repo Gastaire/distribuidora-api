@@ -78,7 +78,38 @@ const login = async (req, res) => {
   }
 };
 
+const reauthenticate = async (req, res) => {
+  const { password } = req.body;
+  const userId = req.user.id; // Obtenemos el ID del usuario ya logueado
+
+  if (!password) {
+      return res.status(400).json({ message: 'Se requiere contraseña.' });
+  }
+
+  try {
+    const { rows } = await db.query('SELECT password_hash FROM usuarios WHERE id = $1', [userId]);
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'La contraseña es incorrecta.' });
+    }
+
+    res.status(200).json({ success: true, message: 'Autenticación correcta.' });
+
+  } catch (error) {
+    console.error('Error en la re-autenticación:', error);
+    res.status(500).json({ message: 'Error interno del servidor' });
+  }
+};
+
+
 module.exports = {
   register,
   login,
+  reauthenticate // <-- Añadir la nueva función aquí
 };
