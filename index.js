@@ -10,6 +10,7 @@ const pedidoItemsRoutes = require('./src/routes/pedido_items.routes');
 const pedidoRoutes = require('./src/routes/pedidos.routes');
 const logRoutes = require('./src/routes/logs.routes');
 const dashboardRoutes = require('./src/routes/dashboard.routes');
+const usuariosRoutes = require('./src/routes/usuarios.routes'); // <-- AÑADIR
 
 const app = express();
 const PORT = process.env.API_PORT || 4000;
@@ -42,6 +43,8 @@ app.use('/api', productoRoutes);
 app.use('/api', clienteRoutes);
 app.use('/api', logRoutes);
 app.use('/api', dashboardRoutes);
+app.use('/api', usuariosRoutes); // <-- AÑADIR
+
 
 
 
