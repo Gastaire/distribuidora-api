@@ -15,26 +15,8 @@ const app = express();
 const PORT = process.env.API_PORT || 4000;
 
 // --- Middlewares ---
-
-// ** SOLUCIÓN DEFINITIVA PARA CORS **
-// 1. Manejar las solicitudes pre-vuelo (OPTIONS) de forma explícita
-app.options('*', cors()); // Habilita cors para todas las rutas en las peticiones OPTIONS
-
-// 2. Usar la configuración de CORS para todas las demás peticiones
-const whitelist = ['https://distrimaxi.onzacore.site', 'https://vendedor.onzacore.site'];
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (whitelist.indexOf(origin) !== -1 || !origin) {
-      callback(null, true);
-    } else {
-      callback(new Error('No permitido por CORS'));
-    }
-  },
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  allowedHeaders: 'Content-Type,Authorization'
-};
-app.use(cors(corsOptions));
-
+// Dejamos solo la configuración básica, ya que Traefik hace el trabajo pesado
+app.use(cors()); 
 app.use(express.json());
 
 
