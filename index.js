@@ -44,8 +44,7 @@ app.use('/api', clienteRoutes);
 app.use('/api', logRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api', usuariosRoutes); // <-- AÑADIR
-
-
+app.use('/api', authRoutes); // <-- ESTA LÍNEA ES LA CLAVE
 
 
 // Iniciar el servidor
