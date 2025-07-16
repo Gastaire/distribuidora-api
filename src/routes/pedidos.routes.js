@@ -6,7 +6,8 @@ const {
     updatePedidoEstado,
     updatePedidoItems,
     archivePedido,
-    cleanupArchivedPedidos 
+    cleanupArchivedPedidos,
+    unarchivePedido
 } = require('../controllers/pedidos.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
@@ -19,5 +20,6 @@ router.put('/pedidos/:id/estado', protect, authorize('admin', 'deposito'), updat
 router.put('/pedidos/:id/items', protect, authorize('admin'), updatePedidoItems);
 router.put('/pedidos/:id/archive', protect, authorize('admin'), archivePedido);
 router.delete('/pedidos/cleanup-archived', protect, authorize('admin'), cleanupArchivedPedidos);
+router.put('/pedidos/:id/unarchive', protect, authorize('admin'), unarchivePedido);
 
 module.exports = router;
