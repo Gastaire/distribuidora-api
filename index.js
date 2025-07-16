@@ -1,3 +1,5 @@
+// Archivo: index.js
+
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
@@ -15,8 +17,24 @@ const app = express();
 const PORT = process.env.API_PORT || 4000;
 
 // --- Middlewares ---
-// Dejamos solo la configuración básica, ya que Traefik se encarga de CORS.
-// app.use(cors()); 
+
+// --- CONFIGURACIÓN DE CORS CORREGIDA ---
+// Definimos las opciones para CORS de forma más segura
+const corsOptions = {
+  origin: 'https://distrimaxi.onzacore.site', // Solo permite peticiones desde tu frontend
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Métodos HTTP permitidos
+  allowedHeaders: ['Content-Type', 'Authorization'], // Headers permitidos en las peticiones
+  optionsSuccessStatus: 200 // Para compatibilidad con navegadores antiguos
+};
+
+// Habilitamos CORS con nuestra configuración
+app.use(cors(corsOptions));
+
+// Habilitamos el "pre-flight" para todas las rutas. El navegador envía una
+// petición OPTIONS antes de peticiones complejas (como POST o PUT) para
+// verificar los permisos de CORS. Esta línea es crucial.
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 // Ruta principal para debug
