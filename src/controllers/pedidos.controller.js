@@ -257,5 +257,7 @@ module.exports = {
     getPedidos,
     getPedidoById,
     updatePedidoItems,
-    updatePedidoEstado
+    updatePedidoEstado,
+    archivePedido,          // <-- AÑADIR ESTA LÍNEA
+    cleanupArchivedPedidos  // <-- AÑADIR ESTA LÍNEA
 };
