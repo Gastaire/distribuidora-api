@@ -329,6 +329,34 @@ const cleanupArchivedPedidos = async (req, res) => {
     }
 };
 
+const unarchivePedido = async (req, res) => {
+    const { id } = req.params;
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+    
+    try {
+        // Cambia el estado de 'archivado' de vuelta a 'pendiente'
+        const { rows } = await pool.query(
+            "UPDATE pedidos SET estado = 'pendiente' WHERE id = $1 AND estado = 'archivado' RETURNING *",
+            [id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Pedido no encontrado o no está archivado.' });
+        }
+        
+        const logDetail = `El usuario ${nombre_usuario} desarchivó el pedido #${id}.`;
+        await pool.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'DESARCHIVAR_PEDIDO', logDetail]
+        );
+
+        res.status(200).json({ message: 'Pedido desarchivado correctamente.' });
+    } catch (error) {
+        console.error(`Error al desarchivar pedido ${id}:`, error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+};
+
 module.exports = {
     createPedido,
     getPedidos,
@@ -336,5 +364,6 @@ module.exports = {
     updatePedidoItems,
     updatePedidoEstado,
     archivePedido,          // <-- AÑADIR ESTA LÍNEA
-    cleanupArchivedPedidos  // <-- AÑADIR ESTA LÍNEA
+    cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
+    unarchivePedidos
 };
