@@ -42,17 +42,18 @@ const getDashboardStats = async (req, res) => {
             ) as combined;
         `;
         
+        // CORRECCIÓN: Se reemplazó el alias "saleDate" en los GROUP BY internos por la expresión completa.
         const salesByDayQuery = `
             SELECT "saleDate", SUM("dailyRevenue") as "dailyRevenue" FROM (
                 SELECT ${dateColumnPedidos} AS "saleDate", SUM(pi.cantidad * pi.precio_congelado) AS "dailyRevenue"
                 FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id
                 WHERE p.estado NOT IN ('cancelado', 'archivado') ${dateFilterPedidos}
-                GROUP BY "saleDate"
+                GROUP BY ${dateColumnPedidos}
                 UNION ALL
                 SELECT ${dateColumnPresenciales} AS "saleDate", SUM(vpi.cantidad * vpi.precio_final_unitario) AS "dailyRevenue"
                 FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id
                 ${dateFilterPresenciales}
-                GROUP BY "saleDate"
+                GROUP BY ${dateColumnPresenciales}
             ) as combined_sales_by_day
             GROUP BY "saleDate" ORDER BY "saleDate" ${isMonthly ? 'DESC LIMIT 6' : 'ASC'}
         `;
@@ -93,10 +94,18 @@ const getDashboardStats = async (req, res) => {
             pool.query(salesBySellerQuery)
         ]);
         
+        // MEJORA: Se asegura de que la respuesta sea consistente para el frontend.
+        const salesByDayData = salesByDayResult.rows.map(r => {
+            if (isMonthly) {
+                return { saleDate: r.saleDate, saleMonth: r.saleDate, monthlyRevenue: r.dailyRevenue };
+            }
+            return { saleDate: r.saleDate, dailyRevenue: r.dailyRevenue };
+        });
+
         res.status(200).json({
             totalRevenue: totalSalesResult.rows[0].totalRevenue || 0,
             totalOrders: totalSalesResult.rows[0].totalOrders || 0,
-            salesByDay: salesByDayResult.rows.map(r => ({ ...r, saleMonth: r.saleDate, monthlyRevenue: r.dailyRevenue })),
+            salesByDay: salesByDayData,
             topProducts: topProductsResult.rows,
             topCustomers: topCustomersResult.rows,
             salesBySeller: salesBySellerResult.rows
