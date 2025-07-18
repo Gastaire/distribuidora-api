@@ -6,8 +6,8 @@ const { pool } = require('../db');
  */
 const getLogs = async (req, res) => {
     try {
-        // Seleccionamos explícitamente las columnas y limitamos el resultado.
-        const query = 'SELECT id, accion, detalle, nombre_usuario, fecha_creacion FROM logs ORDER BY fecha_creacion DESC LIMIT 200';
+        // CORRECCIÓN: Se cambió el nombre de la tabla de 'logs' a 'actividad'.
+        const query = 'SELECT id, accion, detalle, nombre_usuario, fecha_creacion FROM actividad ORDER BY fecha_creacion DESC LIMIT 200';
         
         const result = await pool.query(query);
         
