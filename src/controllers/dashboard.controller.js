@@ -1,9 +1,11 @@
 const { pool } = require('../db');
 
 const getDashboardStats = async (req, res) => {
+    // Parámetros desde el frontend con valores por defecto
     const { salesPeriod = '7d', topProductsLimit = 5 } = req.query;
 
     try {
+        // --- Lógica de Filtros de Fecha ---
         let dateFilterPedidos = "";
         let dateFilterPresenciales = "";
         let dateColumnPedidos = `DATE(p.fecha_creacion)`;
@@ -21,7 +23,9 @@ const getDashboardStats = async (req, res) => {
             dateColumnPedidos = `TO_CHAR(p.fecha_creacion, 'YYYY-MM')`;
             dateColumnPresenciales = `TO_CHAR(vpc.fecha_venta, 'YYYY-MM')`;
         }
-        
+
+        // --- Consultas Unificadas ---
+
         const totalSalesQuery = `
             SELECT 
                 COALESCE(SUM(combined.total), 0) AS "totalRevenue", 
@@ -38,6 +42,7 @@ const getDashboardStats = async (req, res) => {
             ) as combined;
         `;
         
+        // CORRECCIÓN: Se cambia el GROUP BY para usar la posición ordinal (GROUP BY 1) en lugar del alias "saleDate".
         const salesByDayQuery = `
             SELECT "saleDate", SUM("dailyRevenue") as "dailyRevenue" FROM (
                 SELECT ${dateColumnPedidos} AS "saleDate", SUM(pi.cantidad * pi.precio_congelado) AS "dailyRevenue"
@@ -50,7 +55,7 @@ const getDashboardStats = async (req, res) => {
                 ${dateFilterPresenciales}
                 GROUP BY ${dateColumnPresenciales}
             ) as combined_sales_by_day
-            GROUP BY "saleDate" ORDER BY "saleDate" ${isMonthly ? 'DESC LIMIT 6' : 'ASC'}
+            GROUP BY 1 ORDER BY 1 ${isMonthly ? 'DESC LIMIT 6' : 'ASC'}
         `;
 
         const topProductsQuery = {
