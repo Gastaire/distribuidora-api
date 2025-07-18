@@ -1,11 +1,9 @@
 const { pool } = require('../db');
 
 const getDashboardStats = async (req, res) => {
-    // Parámetros desde el frontend con valores por defecto
     const { salesPeriod = '7d', topProductsLimit = 5 } = req.query;
 
     try {
-        // --- Lógica de Filtros de Fecha ---
         let dateFilterPedidos = "";
         let dateFilterPresenciales = "";
         let dateColumnPedidos = `DATE(p.fecha_creacion)`;
@@ -23,9 +21,7 @@ const getDashboardStats = async (req, res) => {
             dateColumnPedidos = `TO_CHAR(p.fecha_creacion, 'YYYY-MM')`;
             dateColumnPresenciales = `TO_CHAR(vpc.fecha_venta, 'YYYY-MM')`;
         }
-
-        // --- Consultas Unificadas ---
-
+        
         const totalSalesQuery = `
             SELECT 
                 COALESCE(SUM(combined.total), 0) AS "totalRevenue", 
@@ -42,7 +38,6 @@ const getDashboardStats = async (req, res) => {
             ) as combined;
         `;
         
-        // CORRECCIÓN: Se reemplazó el alias "saleDate" en los GROUP BY internos por la expresión completa.
         const salesByDayQuery = `
             SELECT "saleDate", SUM("dailyRevenue") as "dailyRevenue" FROM (
                 SELECT ${dateColumnPedidos} AS "saleDate", SUM(pi.cantidad * pi.precio_congelado) AS "dailyRevenue"
@@ -79,7 +74,6 @@ const getDashboardStats = async (req, res) => {
         const topCustomersQuery = `SELECT c.nombre_comercio, SUM(pi.cantidad * pi.precio_congelado) as "totalSpent" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id JOIN clientes c ON p.cliente_id = c.id WHERE p.estado NOT IN ('cancelado', 'archivado') GROUP BY c.nombre_comercio ORDER BY "totalSpent" DESC LIMIT 5`;
         const salesBySellerQuery = `SELECT u.nombre, COUNT(DISTINCT p.id) as "orderCount", SUM(pi.cantidad * pi.precio_congelado) as "totalSold" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id JOIN usuarios u ON p.usuario_id = u.id WHERE p.estado NOT IN ('cancelado', 'archivado') AND u.rol = 'vendedor' GROUP BY u.nombre ORDER BY "totalSold" DESC`;
         
-        // Ejecutamos todas las consultas en paralelo
         const [
             totalSalesResult, 
             salesByDayResult, 
@@ -94,7 +88,6 @@ const getDashboardStats = async (req, res) => {
             pool.query(salesBySellerQuery)
         ]);
         
-        // MEJORA: Se asegura de que la respuesta sea consistente para el frontend.
         const salesByDayData = salesByDayResult.rows.map(r => {
             if (isMonthly) {
                 return { saleDate: r.saleDate, saleMonth: r.saleDate, monthlyRevenue: r.dailyRevenue };
