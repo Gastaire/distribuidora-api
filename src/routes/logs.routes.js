@@ -4,7 +4,11 @@ const { protect, authorize } = require('../middleware/auth.middleware');
 
 const router = Router();
 
-// Solo los administradores pueden ver el registro de actividad
+/**
+ * @route GET /api/logs
+ * @desc Obtener el registro de actividad del sistema.
+ * @access Private (Solo para Admins)
+ */
 router.get('/logs', protect, authorize('admin'), getLogs);
 
 module.exports = router;
