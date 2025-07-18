@@ -1,12 +1,12 @@
-const { pool } = require('../db'); // <-- CORRECCIÓN: Faltaba importar el 'pool' de la base de datos.
+const { pool } = require('../db');
 
 const getDashboardStats = async (req, res) => {
     const { salesPeriod = '7d', topProductsLimit = 5 } = req.query;
 
     try {
-        // --- Consultas a la Base de Datos ---
+        // --- Consultas a la Base de Datos (Versión Simplificada: solo de la tabla Pedidos) ---
 
-        // Consulta para ingresos totales y número de pedidos.
+        // 1. Ingresos totales y número de pedidos
         const totalSalesQuery = `
             SELECT 
                 COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) AS "totalRevenue", 
@@ -16,7 +16,7 @@ const getDashboardStats = async (req, res) => {
             WHERE p.estado NOT IN ('cancelado', 'archivado')
         `;
 
-        // CORRECCIÓN: Se reestructuró la lógica para construir la consulta de ventas por día de manera más clara y segura.
+        // 2. Ventas por período de tiempo
         let salesByDayQuery;
         if (salesPeriod === 'monthly') {
             salesByDayQuery = {
@@ -49,7 +49,7 @@ const getDashboardStats = async (req, res) => {
             };
         }
 
-        // Consulta para los productos más vendidos.
+        // 3. Productos más vendidos
         const topProductsQuery = {
             text: `
                 SELECT 
@@ -65,7 +65,7 @@ const getDashboardStats = async (req, res) => {
             values: [topProductsLimit]
         };
 
-        // Consulta para los mejores clientes.
+        // 4. Mejores clientes
         const topCustomersQuery = `
             SELECT 
                 c.nombre_comercio, 
@@ -79,7 +79,7 @@ const getDashboardStats = async (req, res) => {
             LIMIT 5
         `;
 
-        // Consulta para las ventas por vendedor.
+        // 5. Ventas por vendedor
         const salesBySellerQuery = `
             SELECT 
                 u.nombre, 
@@ -93,7 +93,7 @@ const getDashboardStats = async (req, res) => {
             ORDER BY "totalSold" DESC
         `;
 
-        // Ejecutar todas las consultas en paralelo para mayor eficiencia.
+        // Ejecutar todas las consultas en paralelo
         const [
             totalSalesResult,
             salesByDayResult,
@@ -108,6 +108,7 @@ const getDashboardStats = async (req, res) => {
             pool.query(salesBySellerQuery)
         ]);
 
+        // Enviar la respuesta al frontend
         res.status(200).json({
             totalRevenue: totalSalesResult.rows[0].totalRevenue || 0,
             totalOrders: totalSalesResult.rows[0].totalOrders || 0,
@@ -123,7 +124,6 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
-// <-- CORRECCIÓN: Faltaba exportar la función para que pueda ser usada en las rutas.
 module.exports = {
     getDashboardStats
 };
