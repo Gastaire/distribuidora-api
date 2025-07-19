@@ -2,7 +2,6 @@ const db = require('../db');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 
-// OBTENER TODOS los productos (Sin cambios)
 const getProductos = async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM productos ORDER BY nombre ASC');
@@ -13,7 +12,6 @@ const getProductos = async (req, res) => {
   }
 };
 
-// OBTENER UN SOLO producto por ID (Sin cambios)
 const getProductoById = async (req, res) => {
   const { id } = req.params;
   try {
@@ -28,7 +26,6 @@ const getProductoById = async (req, res) => {
   }
 };
 
-// CREAR un nuevo producto (Sin cambios)
 const createProducto = async (req, res) => {
   const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
   try {
@@ -43,7 +40,6 @@ const createProducto = async (req, res) => {
   }
 };
 
-// ACTUALIZAR un producto existente (Sin cambios)
 const updateProducto = async (req, res) => {
   const { id } = req.params;
   const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
@@ -62,7 +58,6 @@ const updateProducto = async (req, res) => {
   }
 };
 
-// ELIMINAR un producto (Sin cambios)
 const deleteProducto = async (req, res) => {
   const { id } = req.params;
   try {
@@ -77,7 +72,8 @@ const deleteProducto = async (req, res) => {
   }
 };
 
-// **FUNCIÓN DE IMPORTACIÓN REFINADA**
+
+// **FUNCIÓN DE IMPORTACIÓN REFINADA Y CORREGIDA**
 const importProductos = async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'No se ha subido ningún archivo.' });
@@ -85,24 +81,22 @@ const importProductos = async (req, res) => {
 
     const resultados = [];
     const filasConError = [];
-    let numeroFila = 1; // Para reportar errores
+    let numeroFila = 1;
 
     const stream = Readable.from(req.file.buffer.toString('utf8'));
 
     stream
         .pipe(csv({
-            // Mapea los nombres de tu CSV a los nombres de nuestra DB
             mapHeaders: ({ header }) => {
                 const headerTrimmed = header.trim().toLowerCase();
                 if (headerTrimmed === 'a_cod') return 'codigo_sku';
                 if (headerTrimmed === 'a_det') return 'nombre';
                 if (headerTrimmed === 'a_plis1') return 'precio_unitario';
-                return null; // Ignora otras columnas
+                return null;
             }
         }))
         .on('data', (data) => {
             numeroFila++;
-            // Validar que los datos esenciales existen
             if (!data.codigo_sku || !data.nombre || data.precio_unitario === undefined || data.precio_unitario === '') {
                 filasConError.push({ fila: numeroFila, error: 'Faltan datos esenciales (SKU, Nombre o Precio).', data: JSON.stringify(data) });
             } else if (isNaN(parseFloat(data.precio_unitario))) {
@@ -122,23 +116,24 @@ const importProductos = async (req, res) => {
                 for (const row of resultados) {
                     const sku = String(row.codigo_sku).trim();
                     const nombre = String(row.nombre).trim();
+                    // Se aceptan decimales
                     const precio = parseFloat(row.precio_unitario);
 
-                    // Busca si el producto ya existe
-                    const productoExistente = await client.query('SELECT id FROM productos WHERE codigo_sku = $1', [sku]);
+                    // CORRECCIÓN: Se busca el SKU sin distinguir mayúsculas/minúsculas
+                    const productoExistente = await client.query('SELECT id FROM productos WHERE LOWER(codigo_sku) = LOWER($1)', [sku]);
 
                     if (productoExistente.rows.length > 0) {
-                        // Si existe, actualízalo
+                        // Si existe, se actualiza
                         await client.query(
-                            'UPDATE productos SET nombre = $1, precio_unitario = $2, stock = $3 WHERE codigo_sku = $4',
-                            [nombre, Math.round(precio), 'Sí', sku]
+                            'UPDATE productos SET nombre = $1, precio_unitario = $2, stock = $3 WHERE LOWER(codigo_sku) = LOWER($4)',
+                            [nombre, precio, 'Sí', sku]
                         );
                         actualizados++;
                     } else {
-                        // Si no existe, créalo
+                        // Si no existe, se crea
                         await client.query(
                             'INSERT INTO productos (codigo_sku, nombre, precio_unitario, stock) VALUES ($1, $2, $3, $4)',
-                            [sku, nombre, Math.round(precio), 'Sí']
+                            [sku, nombre, precio, 'Sí']
                         );
                         creados++;
                     }
@@ -163,7 +158,6 @@ const importProductos = async (req, res) => {
             }
         });
 };
-
 
 module.exports = {
   getProductos,
