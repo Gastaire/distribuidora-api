@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 
 const protect = (req, res, next) => {
     let token;
+
     // El token se enviará en el header 'Authorization' como 'Bearer <token>'
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         try {
@@ -17,20 +18,20 @@ const protect = (req, res, next) => {
             next(); // Si todo está bien, continuamos a la siguiente función (el controlador)
         } catch (error) {
             console.error(error);
+            // Si el token existe pero es inválido o expiró
             return res.status(401).json({ message: 'No autorizado, el token falló' });
         }
-    }
-
-    if (!token) {
+    } else {
+        // Si el header de autorización no existe o no empieza con 'Bearer'
         return res.status(401).json({ message: 'No autorizado, no se encontró un token' });
     }
 };
 
 const authorize = (...roles) => {
     return (req, res, next) => {
-        if (!roles.includes(req.user.rol)) {
+        if (!req.user || !roles.includes(req.user.rol)) {
             return res.status(403).json({ 
-                message: `El rol '${req.user.rol}' no tiene permiso para realizar esta acción` 
+                message: `El rol '${req.user ? req.user.rol : 'invitado'}' no tiene permiso para realizar esta acción` 
             });
         }
         next();
