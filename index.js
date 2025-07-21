@@ -10,7 +10,7 @@ const pedidoRoutes = require('./src/routes/pedidos.routes');
 const usuariosRoutes = require('./src/routes/usuarios.routes');
 const dashboardRoutes = require('./src/routes/dashboard.routes');
 const logRoutes = require('./src/routes/logs.routes');
-const importRoutes = require('./src/routes/logs.routes');
+const importRoutes = require('./src/routes/import.routes');
 
 
 const app = express();
