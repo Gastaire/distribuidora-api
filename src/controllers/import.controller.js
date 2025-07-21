@@ -13,22 +13,25 @@ exports.importVentasPresenciales = async (req, res) => {
 
     stream
         .pipe(csv({
-            mapHeaders: ({ header }) => header.trim().toUpperCase() // Aseguramos que lea los encabezados en mayúsculas
+            mapHeaders: ({ header }) => header.trim().toUpperCase()
         }))
         .on('data', (row) => {
             const nroComprobante = row.COMPROBANTE;
             if (nroComprobante) {
                 if (!ventasPorComprobante.has(nroComprobante)) {
+                    // Crea una nueva entrada para este comprobante
                     ventasPorComprobante.set(nroComprobante, {
                         fecha: new Date(row.FECHA),
+                        vendedor: row.VENDEDOR,
                         items: []
                     });
                 }
+                // Agrega el item al comprobante correspondiente
                 ventasPorComprobante.get(nroComprobante).items.push({
                     A_COD: row.A_COD,
                     NOMART: row.NOMART,
-                    CANTIDAD: parseInt(row.CANTIDAD, 10),
-                    PRECIOFINAL: Math.round(parseFloat(row.PRECIOFINAL))
+                    CANTIDAD: parseFloat(row.CANTIDAD) || 0,
+                    PRECIOFINAL: parseFloat(row.PRECIOFINAL) || 0
                 });
             }
         })
@@ -41,21 +44,23 @@ exports.importVentasPresenciales = async (req, res) => {
                 await client.query('BEGIN');
 
                 for (const [nro, data] of ventasPorComprobante.entries()) {
-                    // Ignorar comprobantes que ya existen
+                    // 1. Evita duplicados: Revisa si el comprobante ya existe
                     const existing = await client.query('SELECT id FROM ventas_presenciales_comprobantes WHERE comprobante_nro = $1', [nro]);
                     if (existing.rows.length > 0) {
-                        continue;
+                        continue; // Si ya existe, salta al siguiente
                     }
 
+                    // 2. Inserta el comprobante
                     const comprobanteResult = await client.query(
-                        'INSERT INTO ventas_presenciales_comprobantes (comprobante_nro, fecha_venta) VALUES ($1, $2) RETURNING id',
-                        [nro, data.fecha]
+                        'INSERT INTO ventas_presenciales_comprobantes (comprobante_nro, fecha_venta, vendedor) VALUES ($1, $2, $3) RETURNING id',
+                        [nro, data.fecha, data.vendedor]
                     );
                     const comprobanteId = comprobanteResult.rows[0].id;
                     comprobantesCreados++;
 
+                    // 3. Inserta los items asociados a ese comprobante
                     for (const item of data.items) {
-                        if (item.CANTIDAD > 0 && !isNaN(item.PRECIOFINAL)) {
+                        if (item.CANTIDAD > 0) {
                             await client.query(
                                 'INSERT INTO ventas_presenciales_items (comprobante_id, codigo_sku, nombre_producto, cantidad, precio_final_unitario) VALUES ($1, $2, $3, $4, $5)',
                                 [comprobanteId, item.A_COD, item.NOMART, item.CANTIDAD, item.PRECIOFINAL]
