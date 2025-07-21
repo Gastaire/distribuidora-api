@@ -16,13 +16,19 @@ const getDashboardStats = async (req, res) => {
             dateFilterPresenciales = `WHERE vpc.fecha_venta >= NOW() - INTERVAL '30 days'`;
         }
 
+        // --- Consultas Robustas a Prueba de Fallos ---
+
         const totalSalesQuery = `
             SELECT COALESCE(SUM(total), 0) AS "totalRevenue", COALESCE(SUM(orders), 0) AS "totalOrders"
             FROM (
-                SELECT SUM(pi.cantidad * pi.precio_congelado) as total, COUNT(DISTINCT p.id) as orders
+                SELECT 
+                    COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) as total, 
+                    COALESCE(COUNT(DISTINCT p.id), 0) as orders
                 FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id WHERE p.estado NOT IN ('cancelado', 'archivado')
                 UNION ALL
-                SELECT SUM(vpi.cantidad * vpi.precio_final_unitario) as total, COUNT(DISTINCT vpc.id) as orders
+                SELECT 
+                    COALESCE(SUM(vpi.cantidad * vpi.precio_final_unitario), 0) as total, 
+                    COALESCE(COUNT(DISTINCT vpc.id), 0) as orders
                 FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id
             ) as combined_sales;
         `;
@@ -45,7 +51,7 @@ const getDashboardStats = async (req, res) => {
                 FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id
                 WHERE p.estado NOT IN ('cancelado', 'archivado') ${dateFilterPedidos} GROUP BY DATE(p.fecha_creacion)
                 UNION ALL
-                SELECT DATE(vpc.fecha_venta) AS "saleDate", SUM(vpi.cantidad * vpi.precio_final_unitario)
+                SELECT DATE(vpc.fecha_venta) AS "saleDate", SUM(vpi.cantidad * vpi.precio_final_unitario) AS "dailyRevenue"
                 FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id
                 ${dateFilterPresenciales} GROUP BY DATE(vpc.fecha_venta)
             ) as combined_sales GROUP BY "saleDate" ORDER BY "saleDate" ASC
@@ -55,7 +61,7 @@ const getDashboardStats = async (req, res) => {
                 FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id
                 WHERE p.estado NOT IN ('cancelado', 'archivado') GROUP BY "saleMonth"
                 UNION ALL
-                SELECT TO_CHAR(vpc.fecha_venta, 'YYYY-MM') AS "saleMonth", SUM(vpi.cantidad * vpi.precio_final_unitario)
+                SELECT TO_CHAR(vpc.fecha_venta, 'YYYY-MM') AS "saleMonth", SUM(vpi.cantidad * vpi.precio_final_unitario) AS "monthlyRevenue"
                 FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id
                 GROUP BY "saleMonth"
             ) as combined_sales GROUP BY "saleMonth" ORDER BY "saleMonth" DESC LIMIT 6
