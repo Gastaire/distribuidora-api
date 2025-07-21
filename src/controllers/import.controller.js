@@ -8,17 +8,31 @@ exports.importVentasPresenciales = async (req, res) => {
     }
 
     const ventasPorComprobante = new Map();
+    const filasConError = [];
+    let numeroFila = 1;
 
     const stream = Readable.from(req.file.buffer.toString('utf8'));
 
     stream
         .pipe(csv({ mapHeaders: ({ header }) => header.trim().toUpperCase() }))
         .on('data', (row) => {
-            const nroComprobante = row.COMPROBANTE;
-            if (nroComprobante && row.CANTIDAD && row.PRECIOFINAL) {
+            numeroFila++;
+            try {
+                const nroComprobante = row.COMPROBANTE;
+                const fecha = new Date(row.FECHA);
+                const cantidad = parseFloat(row.CANTIDAD);
+                const precio = parseFloat(row.PRECIOFINAL);
+
+                // --- Validación de datos de la fila ---
+                if (!nroComprobante) throw new Error('Falta el número de comprobante.');
+                if (isNaN(fecha.getTime())) throw new Error(`El formato de fecha '${row.FECHA}' es inválido.`);
+                if (isNaN(cantidad)) throw new Error(`El valor de CANTIDAD '${row.CANTIDAD}' no es un número.`);
+                if (isNaN(precio)) throw new Error(`El valor de PRECIOFINAL '${row.PRECIOFINAL}' no es un número.`);
+
+                // Si la fila es válida, la procesamos
                 if (!ventasPorComprobante.has(nroComprobante)) {
                     ventasPorComprobante.set(nroComprobante, {
-                        fecha: new Date(row.FECHA),
+                        fecha: fecha,
                         vendedor: row.VENDEDOR,
                         items: []
                     });
@@ -26,9 +40,13 @@ exports.importVentasPresenciales = async (req, res) => {
                 ventasPorComprobante.get(nroComprobante).items.push({
                     A_COD: row.A_COD,
                     NOMART: row.NOMART,
-                    CANTIDAD: parseFloat(row.CANTIDAD) || 0,
-                    PRECIOFINAL: parseFloat(row.PRECIOFINAL) || 0
+                    CANTIDAD: cantidad,
+                    PRECIOFINAL: precio
                 });
+
+            } catch (error) {
+                // Si algo falla en la fila, la guardamos para el reporte de errores
+                filasConError.push({ fila: numeroFila, error: error.message, data: JSON.stringify(row) });
             }
         })
         .on('end', async () => {
@@ -63,12 +81,14 @@ exports.importVentasPresenciales = async (req, res) => {
 
                 await client.query('COMMIT');
                 res.status(200).json({
-                    message: `Importación completada. Se procesaron ${comprobantesCreados} nuevos comprobantes y ${itemsCreados} items.`
+                    message: `Importación completada. Se procesaron ${comprobantesCreados} nuevos comprobantes y ${itemsCreados} items.`,
+                    filasOmitidas: filasConError.length,
+                    errores: filasConError
                 });
             } catch (error) {
                 await client.query('ROLLBACK');
-                console.error('Error durante la importación de ventas presenciales:', error);
-                res.status(500).json({ message: 'Error en el servidor durante la importación.' });
+                console.error('Error de base de datos durante la importación:', error);
+                res.status(500).json({ message: 'Error en el servidor durante la importación. Revisa los logs.' });
             } finally {
                 client.release();
             }
