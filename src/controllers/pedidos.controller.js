@@ -357,6 +357,42 @@ const unarchivePedido = async (req, res) => {
     }
 };
 
+const updatePedidoNotas = async (req, res) => {
+    const { id } = req.params;
+    const { notas_entrega } = req.body;
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    if (typeof notas_entrega === 'undefined') {
+        return res.status(400).json({ message: 'Se requiere el campo de notas.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const { rows } = await client.query(
+            'UPDATE pedidos SET notas_entrega = $1 WHERE id = $2 RETURNING *',
+            [notas_entrega, id]
+        );
+        if (rows.length === 0) throw new Error('Pedido no encontrado');
+        
+        const logDetail = `El usuario ${nombre_usuario} modificó las notas del pedido #${id}.`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'MODIFICAR_NOTAS_PEDIDO', logDetail]
+        );
+        
+        await client.query('COMMIT');
+        res.status(200).json(rows[0]);
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`Error al actualizar notas del pedido ${id}:`, error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     createPedido,
     getPedidos,
@@ -365,5 +401,6 @@ module.exports = {
     updatePedidoEstado,
     archivePedido,          // <-- AÑADIR ESTA LÍNEA
     cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
+    updatePedidoNotas,
     unarchivePedido
 };
