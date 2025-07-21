@@ -10,6 +10,7 @@ const pedidoRoutes = require('./src/routes/pedidos.routes');
 const usuariosRoutes = require('./src/routes/usuarios.routes');
 const dashboardRoutes = require('./src/routes/dashboard.routes');
 const logRoutes = require('./src/routes/logs.routes');
+const importRoutes = require('./src/routes/logs.routes');
 
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api', clienteRoutes);
 app.use('/api', usuariosRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api', logRoutes);
+app.use('/api', importRoutes);
 
 
 // Iniciar el servidor
