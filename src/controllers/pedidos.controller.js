@@ -36,58 +36,87 @@ const createPedido = async (req, res) => {
     }
 
     const client = await pool.connect();
+    
+    // Variables finales que se usarán para la inserción y el backup.
+    let final_cliente_id = null;
+    let final_notas_entrega = notas_entrega || '';
 
     try {
+        // --- 1. VALIDACIÓN INTELIGENTE DEL CLIENTE (Mejora del primer extracto) ---
+        if (cliente_id) {
+            const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
+            if (clienteResult.rows.length > 0) {
+                // El ID del cliente es válido y existe, lo usamos.
+                final_cliente_id = cliente_id;
+            } else {
+                // El ID no existe (cliente nuevo offline), lo marcamos como "huérfano".
+                final_notas_entrega = `[ATENCIÓN: PEDIDO HUÉRFANO - Cliente con ID local '${cliente_id}' no encontrado] \n\n` + final_notas_entrega;
+            }
+        } else {
+            // El pedido llegó sin ID de cliente.
+            final_notas_entrega = `[ATENCIÓN: PEDIDO CREADO SIN CLIENTE ASIGNADO] \n\n` + final_notas_entrega;
+        }
+
         await client.query('BEGIN');
 
+        // --- 2. INSERCIÓN EN LA BASE DE DATOS ---
         const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega) VALUES ($1, $2, $3, $4) RETURNING id, fecha_creacion';
-        const pedidoResult = await client.query(pedidoQuery, [cliente_id, usuario_id, 'pendiente', notas_entrega]);
+        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega]);
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
-
-        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${fechaCreacion}\nCliente ID: ${cliente_id}\nNotas: ${notas_entrega}\n\nItems:\n`;
+        
+        // --- 3. PREPARACIÓN DEL BACKUP (Mejora del segundo extracto) ---
+        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id || 'N/A'}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
 
         for (const item of items) {
+            // Buscamos el producto para congelar sus datos actuales
             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario, stock FROM productos WHERE id = $1', [item.producto_id]);
-            if (productoResult.rows.length === 0) throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
+            if (productoResult.rows.length === 0) {
+                // Si un producto no existe, la transacción debe fallar.
+                throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
+            }
 
             const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
             const avisoFaltante = (stock === 'No');
             
-            // CORRECCIÓN: Ahora insertamos los datos históricos del producto
+            // Insertamos el item del pedido con los datos "congelados"
             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
             await client.query(itemQuery, [nuevoPedidoId, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
-            backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku}) @ $${precio_unitario}\n`;
+            
+            // Agregamos la línea al contenido del backup
+            backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku || 'N/A'}) @ $${precio_unitario}\n`;
         }
 
+        // Guardamos el log de la actividad
         const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId}.`;
-        await client.query(
-            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
-            [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]
-        );
+        await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]);
 
+        // Si todo fue bien, confirmamos la transacción
         await client.query('COMMIT');
 
-        // Guardar backup en el servidor
+        // --- 4. GUARDADO DEL ARCHIVO DE BACKUP ---
+        // Esto se ejecuta solo si el COMMIT fue exitoso.
         try {
-            await manageBackups();
+            await manageBackups(); // Limpia backups antiguos si es necesario
             const backupFileName = `pedido_${nuevoPedidoId}_${Date.now()}.txt`;
             await fs.writeFile(path.join(BACKUP_DIR, backupFileName), backupContent);
         } catch (backupError) {
-            console.error("Error al guardar el backup del pedido:", backupError);
-            // No detenemos el proceso si el backup falla, pero lo registramos.
+            console.error(`[ERROR DE BACKUP] Pedido #${nuevoPedidoId} creado exitosamente, pero falló al guardar el archivo de respaldo:`, backupError);
+            // No se devuelve un error al cliente, ya que el pedido SÍ se creó.
         }
 
         res.status(201).json({ message: 'Pedido creado exitosamente', pedido_id: nuevoPedidoId });
 
     } catch (error) {
+        // Si algo falla durante la transacción, la revertimos.
         await client.query('ROLLBACK');
-        console.error('Error al crear pedido:', error);
-        res.status(500).json({ message: 'Error interno del servidor al crear el pedido.' });
+        console.error('Error al crear pedido (transacción revertida):', error);
+        res.status(500).json({ message: error.message || 'Error interno del servidor al crear el pedido.' });
     } finally {
+        // Liberamos la conexión del pool en cualquier caso.
         client.release();
     }
-};
+}
 
 // --- ACTUALIZAR los items de un pedido (VERSIÓN MEJORADA CON LOGS) ---
 const updatePedidoItems = async (req, res) => {
