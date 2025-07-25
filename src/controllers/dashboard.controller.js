@@ -1,60 +1,114 @@
 const { pool } = require('../db');
 
 const getDashboardStats = async (req, res) => {
-    const { salesPeriod = '7d', topProductsLimit = 5, source = 'pedidos' } = req.query;
-    const client = await pool.connect();
+    const { source = 'pedidos', salesPeriod = '7d', topProductsLimit = 5 } = req.query;
+    const limit = parseInt(topProductsLimit, 10) || 5;
+
+    let dateFilter = '';
+    if (salesPeriod === '7d') {
+        dateFilter = `AND fecha_creacion >= CURDATE() - INTERVAL 7 DAY`;
+    } else if (salesPeriod === '30d') {
+        dateFilter = `AND fecha_creacion >= CURDATE() - INTERVAL 30 DAY`;
+    }
+
+    const isPresencial = source === 'presencial';
+    const table = isPresencial ? 'ventas_presenciales' : 'pedidos';
+    const itemsTable = isPresencial ? 'ventas_presenciales_items' : 'pedido_items';
+    const priceColumn = isPresencial ? 'precio_unitario' : 'precio_congelado';
+    const dateColumn = isPresencial ? 'fecha_venta' : 'fecha_creacion';
 
     try {
-        let stats = {};
-
-        if (source === 'pedidos') {
-            // --- Lógica para Pedidos de la App ---
-            let dateFilter = "";
-            if (salesPeriod === '7d') dateFilter = `AND p.fecha_creacion >= NOW() - INTERVAL '7 days'`;
-            if (salesPeriod === '30d') dateFilter = `AND p.fecha_creacion >= NOW() - INTERVAL '30 days'`;
-
-            const totalQuery = `SELECT COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) AS "totalRevenue", COUNT(DISTINCT p.id) AS "totalOrders" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id WHERE p.estado NOT IN ('cancelado', 'archivado')`;
-            
-            const salesByPeriodQuery = salesPeriod === 'monthly'
-                ? `SELECT TO_CHAR(p.fecha_creacion, 'YYYY-MM') AS "saleMonth", SUM(pi.cantidad * pi.precio_congelado) AS "monthlyRevenue" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id WHERE p.estado NOT IN ('cancelado', 'archivado') GROUP BY "saleMonth" ORDER BY "saleMonth" DESC LIMIT 6`
-                : `SELECT DATE(p.fecha_creacion) AS "saleDate", SUM(pi.cantidad * pi.precio_congelado) AS "dailyRevenue" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id WHERE p.estado NOT IN ('cancelado', 'archivado') ${dateFilter} GROUP BY DATE(p.fecha_creacion) ORDER BY "saleDate" ASC`;
-
-            const topProductsQuery = `SELECT pi.nombre_producto as nombre, SUM(pi.cantidad) AS "totalQuantity" FROM pedido_items pi JOIN pedidos p ON pi.pedido_id = p.id WHERE p.estado NOT IN ('cancelado', 'archivado') GROUP BY pi.nombre_producto ORDER BY "totalQuantity" DESC LIMIT $1`;
-            const topCustomersQuery = `SELECT c.nombre_comercio, SUM(pi.cantidad * pi.precio_congelado) as "totalSpent" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id JOIN clientes c ON p.cliente_id = c.id WHERE p.estado NOT IN ('cancelado', 'archivado') GROUP BY c.nombre_comercio ORDER BY "totalSpent" DESC LIMIT 5`;
-            const salesBySellerQuery = `SELECT u.nombre, COUNT(DISTINCT p.id) as "orderCount", SUM(pi.cantidad * pi.precio_congelado) as "totalSold" FROM pedidos p JOIN pedido_items pi ON p.id = pi.pedido_id JOIN usuarios u ON p.usuario_id = u.id WHERE p.estado NOT IN ('cancelado', 'archivado') AND u.rol = 'vendedor' GROUP BY u.nombre ORDER BY "totalSold" DESC`;
-
-            const [total, period, products, customers, sellers] = await Promise.all([
-                client.query(totalQuery), client.query(salesByPeriodQuery), client.query(topProductsQuery, [topProductsLimit]), client.query(topCustomersQuery), client.query(salesBySellerQuery)
-            ]);
-
-            stats = { totalRevenue: total.rows[0]?.totalRevenue, totalOrders: total.rows[0]?.totalOrders, salesByDay: period.rows, topProducts: products.rows, topCustomers: customers.rows, salesBySeller: sellers.rows };
-
+        // --- Consultas existentes ---
+        const totalRevenueQuery = `SELECT SUM(total) as totalRevenue FROM ${table} WHERE estado != 'cancelado'`;
+        const totalOrdersQuery = `SELECT COUNT(id) as totalOrders FROM ${table} WHERE estado != 'cancelado'`;
+        
+        let salesByDayQuery;
+        if (salesPeriod === 'monthly') {
+            salesByDayQuery = `
+                SELECT DATE_FORMAT(${dateColumn}, '%Y-%m') as saleMonth, SUM(total) as monthlyRevenue 
+                FROM ${table} 
+                WHERE estado != 'cancelado' 
+                GROUP BY saleMonth 
+                ORDER BY saleMonth ASC`;
         } else {
-            // --- Lógica para Ventas Presenciales ---
-            let dateFilter = "";
-            if (salesPeriod === '7d') dateFilter = `WHERE vpc.fecha_venta >= NOW() - INTERVAL '7 days'`;
-            if (salesPeriod === '30d') dateFilter = `WHERE vpc.fecha_venta >= NOW() - INTERVAL '30 days'`;
-
-            const totalQuery = `SELECT COALESCE(SUM(vpi.cantidad * vpi.precio_final_unitario), 0) AS "totalRevenue", COUNT(DISTINCT vpc.id) AS "totalOrders" FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id`;
-            
-            const salesByPeriodQuery = salesPeriod === 'monthly'
-                ? `SELECT TO_CHAR(vpc.fecha_venta, 'YYYY-MM') AS "saleMonth", SUM(vpi.cantidad * vpi.precio_final_unitario) AS "monthlyRevenue" FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id GROUP BY "saleMonth" ORDER BY "saleMonth" DESC LIMIT 6`
-                : `SELECT DATE(vpc.fecha_venta) AS "saleDate", SUM(vpi.cantidad * vpi.precio_final_unitario) AS "dailyRevenue" FROM ventas_presenciales_comprobantes vpc JOIN ventas_presenciales_items vpi ON vpc.id = vpi.comprobante_id ${dateFilter} GROUP BY DATE(vpc.fecha_venta) ORDER BY "saleDate" ASC`;
-
-            const topProductsQuery = `SELECT vpi.nombre_producto as nombre, SUM(vpi.cantidad) AS "totalQuantity" FROM ventas_presenciales_items vpi GROUP BY vpi.nombre_producto ORDER BY "totalQuantity" DESC LIMIT $1`;
-            
-            const [total, period, products] = await Promise.all([
-                client.query(totalQuery), client.query(salesByPeriodQuery), client.query(topProductsQuery, [topProductsLimit])
-            ]);
-
-            stats = { totalRevenue: total.rows[0]?.totalRevenue, totalOrders: total.rows[0]?.totalOrders, salesByDay: period.rows, topProducts: products.rows, topCustomers: [], salesBySeller: [] }; // Datos vacíos para mantener la estructura
+            salesByDayQuery = `
+                SELECT DATE(${dateColumn}) as saleDate, SUM(total) as dailyRevenue 
+                FROM ${table} 
+                WHERE estado != 'cancelado' ${dateFilter.replace('fecha_creacion', dateColumn)} 
+                GROUP BY saleDate 
+                ORDER BY saleDate ASC`;
         }
-        res.status(200).json(stats);
+
+        const topProductsQuery = `
+            SELECT p.nombre, SUM(pi.cantidad) AS totalQuantity
+            FROM ${itemsTable} pi
+            JOIN productos p ON pi.producto_id = p.id
+            JOIN ${table} pe ON pi.${isPresencial ? 'venta_id' : 'pedido_id'} = pe.id
+            WHERE pe.estado != 'cancelado'
+            GROUP BY p.nombre
+            ORDER BY totalQuantity DESC
+            LIMIT ?`;
+
+        // --- NUEVA CONSULTA: Top Productos por Ingresos ---
+        const topProductsByRevenueQuery = `
+            SELECT p.nombre, SUM(pi.cantidad * pi.${priceColumn}) AS totalRevenue
+            FROM ${itemsTable} pi
+            JOIN productos p ON pi.producto_id = p.id
+            JOIN ${table} pe ON pi.${isPresencial ? 'venta_id' : 'pedido_id'} = pe.id
+            WHERE pe.estado != 'cancelado'
+            GROUP BY p.nombre
+            ORDER BY totalRevenue DESC
+            LIMIT ?`;
+
+        const topCustomersQuery = `
+            SELECT c.nombre_comercio, SUM(p.total) as totalSpent 
+            FROM pedidos p 
+            JOIN clientes c ON p.cliente_id = c.id 
+            WHERE p.estado != 'cancelado' 
+            GROUP BY c.nombre_comercio 
+            ORDER BY totalSpent DESC 
+            LIMIT 5`;
+
+        const salesBySellerQuery = `
+            SELECT u.nombre, COUNT(p.id) as orderCount, SUM(p.total) as totalSold 
+            FROM pedidos p 
+            JOIN usuarios u ON p.vendedor_id = u.id 
+            WHERE p.estado != 'cancelado' 
+            GROUP BY u.nombre 
+            ORDER BY totalSold DESC`;
+
+        // --- Ejecución de todas las consultas ---
+        const [
+            [revenueResult], 
+            [ordersResult], 
+            [salesByDay], 
+            [topProducts],
+            [topProductsByRevenue], // Nueva variable para el resultado
+            [topCustomers], 
+            [salesBySeller]
+        ] = await Promise.all([
+            pool.query(totalRevenueQuery),
+            pool.query(totalOrdersQuery),
+            pool.query(salesByDayQuery),
+            pool.query(topProductsQuery, [limit]),
+            pool.query(topProductsByRevenueQuery, [limit]), // Ejecución de la nueva consulta
+            source === 'pedidos' ? pool.query(topCustomersQuery) : Promise.resolve([[]]),
+            source === 'pedidos' ? pool.query(salesBySellerQuery) : Promise.resolve([[]])
+        ]);
+
+        res.json({
+            totalRevenue: revenueResult.totalRevenue || 0,
+            totalOrders: ordersResult.totalOrders || 0,
+            salesByDay,
+            topProducts,
+            topProductsByRevenue, // Añadir el nuevo dato a la respuesta
+            topCustomers: source === 'pedidos' ? topCustomers : [],
+            salesBySeller: source === 'pedidos' ? salesBySeller : []
+        });
+
     } catch (error) {
-        console.error(`Error en dashboard (source: ${source}):`, error);
-        res.status(500).json({ message: 'Error interno del servidor.' });
-    } finally {
-        if (client) client.release();
+        console.error(error);
+        res.status(500).json({ message: 'Error al obtener las estadísticas del dashboard' });
     }
 };
 
