@@ -1,7 +1,7 @@
 const { pool } = require('../db');
 
 const getDashboardStats = async (req, res) => {
-    const { source = 'pedidos', salesPeriod = '7d', topProductsLimit = 5 } = req.query;
+    const { salesPeriod = '7d', topProductsLimit = 5, source = 'pedidos' } = req.query;
     const limit = parseInt(topProductsLimit, 10) || 5;
 
     let dateFilter = '';
