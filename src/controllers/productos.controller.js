@@ -1,6 +1,8 @@
 const db = require('../db');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
+const fs = require('fs');
+
 
 const getProductos = async (req, res) => {
   try {
@@ -74,89 +76,81 @@ const deleteProducto = async (req, res) => {
 
 
 // **FUNCIÓN DE IMPORTACIÓN REFINADA Y CORREGIDA**
-const importProductos = async (req, res) => {
+const importProducts = async (req, res, next) => {
     if (!req.file) {
-        return res.status(400).json({ message: 'No se ha subido ningún archivo.' });
+        return res.status(400).send('No se ha subido ningún archivo.');
     }
 
-    const resultados = [];
-    const filasConError = [];
-    let numeroFila = 1;
+    const results = [];
+    const filePath = req.file.path;
 
-    const stream = Readable.from(req.file.buffer.toString('utf8'));
-
-    stream
-        .pipe(csv({
-            mapHeaders: ({ header }) => {
-                const headerTrimmed = header.trim().toLowerCase();
-                if (headerTrimmed === 'a_cod') return 'codigo_sku';
-                if (headerTrimmed === 'a_det') return 'nombre';
-                if (headerTrimmed === 'a_plis1') return 'precio_unitario';
-                return null;
-            }
-        }))
-        .on('data', (data) => {
-            numeroFila++;
-            if (!data.codigo_sku || !data.nombre || data.precio_unitario === undefined || data.precio_unitario === '') {
-                filasConError.push({ fila: numeroFila, error: 'Faltan datos esenciales (SKU, Nombre o Precio).', data: JSON.stringify(data) });
-            } else if (isNaN(parseFloat(data.precio_unitario))) {
-                filasConError.push({ fila: numeroFila, error: 'El precio no es un número válido.', data: JSON.stringify(data) });
-            } else {
-                resultados.push(data);
-            }
-        })
-        .on('end', async () => {
-            const client = await db.pool.connect();
-            let creados = 0;
-            let actualizados = 0;
-
-            try {
-                await client.query('BEGIN');
-
-                for (const row of resultados) {
-                    const sku = String(row.codigo_sku).trim();
-                    const nombre = String(row.nombre).trim();
-                    // Se aceptan decimales
-                    const precio = parseFloat(row.precio_unitario);
-
-                    // CORRECCIÓN: Se busca el SKU sin distinguir mayúsculas/minúsculas
-                    const productoExistente = await client.query('SELECT id FROM productos WHERE LOWER(codigo_sku) = LOWER($1)', [sku]);
-
-                    if (productoExistente.rows.length > 0) {
-                        // Si existe, se actualiza
-                        await client.query(
-                            'UPDATE productos SET nombre = $1, precio_unitario = $2, stock = $3 WHERE LOWER(codigo_sku) = LOWER($4)',
-                            [nombre, precio, 'Sí', sku]
-                        );
-                        actualizados++;
-                    } else {
-                        // Si no existe, se crea
-                        await client.query(
-                            'INSERT INTO productos (codigo_sku, nombre, precio_unitario, stock) VALUES ($1, $2, $3, $4)',
-                            [sku, nombre, precio, 'Sí']
-                        );
-                        creados++;
-                    }
-                }
-                
-                await client.query('COMMIT');
-                
-                res.status(200).json({
-                    message: `Importación completada.`,
-                    creados: creados,
-                    actualizados: actualizados,
-                    filasOmitidas: filasConError.length,
-                    errores: filasConError
-                });
-
-            } catch (error) {
-                await client.query('ROLLBACK');
-                console.error('Error durante la importación de CSV:', error);
-                res.status(500).json({ message: 'Error en el servidor durante la importación.' });
-            } finally {
-                client.release();
-            }
+    try {
+        await new Promise((resolve, reject) => {
+            fs.createReadStream(filePath)
+                .pipe(csv({ separator: ';' }))
+                .on('data', (data) => results.push(data))
+                .on('end', resolve)
+                .on('error', reject);
         });
+
+        const client = await pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            for (const item of results) {
+                const codigo_sku = item.codigo_sku ? item.codigo_sku.trim() : null;
+                const nombre = item.nombre;
+                const descripcion = item.descripcion || '';
+
+                // --- BUSINESS LOGIC CHANGES ---
+                // 1. Price: Parse price as a float first, then truncate to an integer.
+                const precio_unitario = parseInt(String(item.precio_unitario || '0').replace(',', '.'), 10);
+
+                // 2. Stock: Interpret 'si' as 1 (available) and anything else as 0 (unavailable).
+                const stock = (item.stock || '').toLowerCase().trim() === 'si' ? 1 : 0;
+                // --- END OF CHANGES ---
+
+                if (!codigo_sku || !nombre) {
+                    console.warn('Fila de CSV omitida por no tener codigo_sku o nombre:', item);
+                    continue;
+                }
+
+                if (isNaN(precio_unitario)) {
+                    console.warn('Fila de CSV omitida por precio inválido:', item);
+                    continue;
+                }
+
+                const upsertQuery = `
+                    INSERT INTO productos (codigo_sku, nombre, descripcion, precio_unitario, stock)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (codigo_sku) 
+                    DO UPDATE SET
+                        nombre = EXCLUDED.nombre,
+                        descripcion = EXCLUDED.descripcion,
+                        precio_unitario = EXCLUDED.precio_unitario,
+                        stock = EXCLUDED.stock;
+                `;
+                
+                await client.query(upsertQuery, [codigo_sku, nombre, descripcion, precio_unitario, stock]);
+            }
+
+            await client.query('COMMIT');
+            res.status(200).json({ message: 'Productos importados y actualizados correctamente.' });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error durante la importación de productos. Se revirtieron los cambios:', error);
+            next(error);
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error('Error al leer el archivo CSV:', error);
+        res.status(500).json({ message: 'Error al procesar el archivo CSV.' });
+    } finally {
+        fs.unlinkSync(filePath);
+    }
 };
 
 module.exports = {
