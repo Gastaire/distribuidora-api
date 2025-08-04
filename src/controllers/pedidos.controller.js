@@ -42,22 +42,28 @@ const createPedido = async (req, res) => {
     let final_notas_entrega = notas_entrega || '';
 
     try {
-        // --- 1. VALIDACIÓN INTELIGENTE DEL CLIENTE (Mejora del primer extracto) ---
+        // --- 1. VALIDACIÓN INTELIGENTE DEL CLIENTE ---
         if (cliente_id) {
             const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
             if (clienteResult.rows.length > 0) {
-                // El ID del cliente es válido y existe, lo usamos.
                 final_cliente_id = cliente_id;
             } else {
-                // El ID no existe (cliente nuevo offline), lo marcamos como "huérfano".
-                final_notas_entrega = `[ATENCIÓN: PEDIDO HUÉRFANO - Cliente con ID local '${cliente_id}' no encontrado] \n\n` + final_notas_entrega;
+                // El ID no existe. Esto significa que el frontend envió un ID local
+                // que no fue sincronizado. La transacción debe fallar para que el frontend
+                // pueda reintentarlo más tarde, en lugar de crear un pedido huérfano.
+                await client.query('ROLLBACK'); // Revertimos inmediatamente
+                client.release();
+                // Devolvemos un error 422 "Unprocessable Entity", que es más específico.
+                return res.status(422).json({ 
+                    message: `El cliente con id '${cliente_id}' no existe en el servidor. El cliente debe ser sincronizado primero.` 
+                });
             }
         } else {
-            // El pedido llegó sin ID de cliente.
-            final_notas_entrega = `[ATENCIÓN: PEDIDO CREADO SIN CLIENTE ASIGNADO] \n\n` + final_notas_entrega;
+            // Si no se proporciona un cliente_id, también es un error.
+            await client.query('ROLLBACK');
+            client.release();
+            return res.status(400).json({ message: 'No se proporcionó un cliente_id para el pedido.' });
         }
-
-        await client.query('BEGIN');
 
         // --- 2. INSERCIÓN EN LA BASE DE DATOS ---
         const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega) VALUES ($1, $2, $3, $4) RETURNING id, fecha_creacion';
