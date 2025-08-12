@@ -8,12 +8,14 @@ const {
     updatePedidoNotas,
     archivePedido,
     cleanupArchivedPedidos,
-    unarchivePedido,
-    combinarPedidos
+    unarchivePedido
 } = require('../controllers/pedidos.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
+
+
 const router = Router();
+
 
 router.post('/pedidos', protect, authorize('vendedor', 'admin'), createPedido);
 router.get('/pedidos', protect, getPedidos);
@@ -24,6 +26,6 @@ router.put('/pedidos/:id/archive', protect, authorize('admin'), archivePedido);
 router.delete('/pedidos/cleanup-archived', protect, authorize('admin'), cleanupArchivedPedidos);
 router.put('/pedidos/:id/unarchive', protect, authorize('admin'), unarchivePedido);
 router.put('/pedidos/:id/notas', protect, authorize('admin', 'deposito'), updatePedidoNotas);
-router.post('/pedidos/combinar', authMiddleware, combinarPedidos);
+
 
 module.exports = router;
