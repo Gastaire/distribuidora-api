@@ -12,7 +12,6 @@ const {
     combinarPedidos
 } = require('../controllers/pedidos.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
-const { authMiddleware } = require('../middlewares/auth'); // Asegúrate de proteger la ruta
 
 const router = Router();
 
