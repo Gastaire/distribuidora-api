@@ -247,6 +247,89 @@ const getPedidos = async (req, res) => {
     }
 };
 
+// Copia esta función completa dentro de pedidos.controller.js
+
+const combinarPedidos = async (req, res) => {
+    const { pedidoIds } = req.body; // Recibimos un array de IDs desde el frontend
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    if (!pedidoIds || !Array.isArray(pedidoIds) || pedidoIds.length < 2) {
+        return res.status(400).json({ message: 'Se necesitan al menos dos pedidos para combinar.' });
+    }
+
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN'); [cite_start]// <-- Iniciamos la transacción [cite: 1]
+
+        // 1. Validar que todos los pedidos existan y pertenezcan al mismo cliente
+        const pedidosOriginalesResult = await client.query(
+            "SELECT id, cliente_id, estado FROM pedidos WHERE id = ANY($1::int[])", [pedidoIds]
+        );
+        
+        if (pedidosOriginalesResult.rows.length !== pedidoIds.length) {
+            throw new Error('Uno o más pedidos no fueron encontrados.');
+        }
+
+        const primerClienteId = pedidosOriginalesResult.rows[0].cliente_id;
+        if (!pedidosOriginalesResult.rows.every(p => p.cliente_id === primerClienteId)) {
+            throw new Error('No se pueden combinar pedidos de diferentes clientes.');
+        }
+
+        // 2. Obtener y consolidar todos los items de los pedidos a combinar
+        const itemsResult = await client.query("SELECT * FROM pedido_items WHERE pedido_id = ANY($1::int[])", [pedidoIds]);
+        const itemsConsolidados = new Map();
+
+        for (const item of itemsResult.rows) {
+            if (itemsConsolidados.has(item.producto_id)) {
+                itemsConsolidados.get(item.producto_id).cantidad += item.cantidad;
+            } else {
+                itemsConsolidados.set(item.producto_id, { ...item, cantidad: item.cantidad });
+            }
+        }
+
+        // 3. Crear el nuevo pedido "maestro"
+        const notasMaestro = `Pedido combinado a partir de los IDs: ${pedidoIds.join(', ')}.`;
+        const pedidoMaestroResult = await client.query(
+            'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega) VALUES ($1, $2, $3, $4) RETURNING id',
+            [primerClienteId, usuario_id, 'pendiente', notasMaestro]
+        );
+        const nuevoPedidoId = pedidoMaestroResult.rows[0].id;
+
+        // 4. Insertar los items consolidados en el nuevo pedido maestro
+        for (const item of itemsConsolidados.values()) {
+            await client.query(
+                'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)',
+                [nuevoPedidoId, item.producto_id, item.cantidad, item.precio_congelado, item.nombre_producto, item.codigo_sku]
+            );
+        }
+
+        // 5. Actualizar los pedidos originales para marcarlos como combinados
+        await client.query(
+            "UPDATE pedidos SET estado = 'combinado', pedido_maestro_id = $1 WHERE id = ANY($2::int[])",
+            [nuevoPedidoId, pedidoIds]
+        );
+
+        // 6. Registrar la acción en la tabla de actividad
+        const logDetail = `El usuario ${nombre_usuario} combinó los pedidos [${pedidoIds.join(', ')}] en el nuevo pedido maestro #${nuevoPedidoId}.`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'COMBINAR_PEDIDOS', logDetail]
+        );
+
+        await client.query('COMMIT'); [cite_start]// <-- Confirmamos todos los cambios [cite: 1]
+
+        res.status(201).json({ message: 'Pedidos combinados con éxito.', nuevoPedidoId });
+
+    } catch (error) {
+        await client.query('ROLLBACK'); [cite_start]// <-- Revertimos todo si algo falla [cite: 1]
+        console.error('Error al combinar pedidos:', error);
+        res.status(500).json({ message: error.message || 'Error interno del servidor al combinar pedidos.' });
+    } finally {
+        client.release(); [cite_start]// <-- Liberamos la conexión [cite: 1]
+    }
+};
+
 // UPDATE ESTADO (Sin cambios)
 const updatePedidoEstado = async (req, res) => {
     const { id } = req.params;
@@ -437,5 +520,6 @@ module.exports = {
     archivePedido,          // <-- AÑADIR ESTA LÍNEA
     cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
     updatePedidoNotas,
-    unarchivePedido
+    unarchivePedido,
+    combinarPedidos
 };
