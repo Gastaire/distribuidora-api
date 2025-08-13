@@ -222,10 +222,10 @@ const getPedidoById = async (req, res) => {
 const getPedidos = async (req, res) => {
     const { rol, id: usuario_id } = req.user;
     let query = `
-        SELECT p.id, p.fecha_creacion, p.estado, c.nombre_comercio, u.nombre as nombre_vendedor
+        SELECT p.id, p.fecha_creacion, p.estado, p.cliente_id, c.nombre_comercio, u.nombre as nombre_vendedor
         FROM pedidos p
-        JOIN clientes c ON p.cliente_id = c.id
-        JOIN usuarios u ON p.usuario_id = u.id
+        LEFT JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN usuarios u ON p.usuario_id = u.id
     `;
     const queryParams = [];
 
