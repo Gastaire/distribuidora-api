@@ -6,6 +6,7 @@ const {
     updatePedidoEstado,
     updatePedidoItems,
     updatePedidoNotas,
+    updatePedido,
     archivePedido,
     cleanupArchivedPedidos,
     unarchivePedido,
@@ -23,6 +24,7 @@ router.get('/pedidos', protect, getPedidos);
 router.get('/pedidos/:id', protect, getPedidoById);
 router.put('/pedidos/:id/estado', protect, authorize('admin', 'deposito'), updatePedidoEstado);
 router.put('/pedidos/:id/items', protect, authorize('admin'), updatePedidoItems);
+router.put('/pedidos/:id', protect, authorize('vendedor', 'admin'), updatePedido);
 router.put('/pedidos/:id/archive', protect, authorize('admin'), archivePedido);
 router.delete('/pedidos/cleanup-archived', protect, authorize('admin'), cleanupArchivedPedidos);
 router.put('/pedidos/:id/unarchive', protect, authorize('admin'), unarchivePedido);
