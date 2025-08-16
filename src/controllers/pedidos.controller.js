@@ -124,6 +124,57 @@ const createPedido = async (req, res) => {
     }
 }
 
+const updatePedido = async (req, res) => {
+    const { id: pedido_id } = req.params;
+    const { items, notas_entrega } = req.body;
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: 'El pedido debe contener al menos un item.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Actualizar las notas del pedido principal
+        await client.query(
+            'UPDATE pedidos SET notas_entrega = $1 WHERE id = $2',
+            [notas_entrega || '', pedido_id]
+        );
+
+        // 2. Borrar los items antiguos para reemplazarlos
+        await client.query('DELETE FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
+
+        // 3. Insertar los nuevos items con precios actualizados
+        for (const item of items) {
+             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario FROM productos WHERE id = $1', [item.producto_id]);
+             if (productoResult.rows.length === 0) throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
+             const { nombre, codigo_sku, precio_unitario } = productoResult.rows[0];
+            
+             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)';
+             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, nombre, codigo_sku]);
+        }
+        
+        // 4. Registrar la actividad
+        const logDetail = `El usuario ${nombre_usuario} actualizó el pedido #${pedido_id}.`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'ACTUALIZAR_PEDIDO', logDetail]
+        );
+
+        await client.query('COMMIT');
+        res.status(200).json({ message: 'Pedido actualizado exitosamente.' });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error al actualizar el pedido:', error);
+        res.status(500).json({ message: 'Error interno del servidor al actualizar el pedido.' });
+    } finally {
+        client.release();
+    }
+};
+
 // --- ACTUALIZAR los items de un pedido (VERSIÓN MEJORADA CON LOGS) ---
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
@@ -519,6 +570,7 @@ module.exports = {
     updatePedidoEstado,
     archivePedido,          // <-- AÑADIR ESTA LÍNEA
     cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
+    updatePedido,
     updatePedidoNotas,
     unarchivePedido,
     combinarPedidos
