@@ -2,6 +2,7 @@ const { Router } = require('express');
 const {
     createPedido,
     getPedidos,
+    getMisPedidos, // <-- IMPORTAMOS LA NUEVA FUNCIÓN
     getPedidoById,
     updatePedidoEstado,
     updatePedidoItems,
@@ -21,6 +22,12 @@ const router = Router();
 
 router.post('/pedidos', protect, authorize('vendedor', 'admin'), createPedido);
 router.get('/pedidos', protect, getPedidos);
+
+// --- INICIO DE NUEVA RUTA ---
+// Ruta para que un vendedor obtenga su propio historial de pedidos.
+router.get('/pedidos/mis-pedidos', protect, authorize('vendedor', 'admin'), getMisPedidos);
+// --- FIN DE NUEVA RUTA ---
+
 router.get('/pedidos/:id', protect, getPedidoById);
 router.put('/pedidos/:id/estado', protect, authorize('admin', 'deposito'), updatePedidoEstado);
 router.put('/pedidos/:id/items', protect, authorize('admin'), updatePedidoItems);
