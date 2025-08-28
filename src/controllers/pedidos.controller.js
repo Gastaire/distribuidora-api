@@ -42,6 +42,8 @@ const createPedido = async (req, res) => {
     let final_notas_entrega = notas_entrega || '';
 
     try {
+        await client.query('BEGIN'); // <-- Inicia la transacción
+
         // --- 1. VALIDACIÓN INTELIGENTE DEL CLIENTE ---
         if (cliente_id) {
             const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
@@ -127,7 +129,7 @@ const createPedido = async (req, res) => {
 const updatePedido = async (req, res) => {
     const { id: pedido_id } = req.params;
     const { items, notas_entrega } = req.body;
-    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+    const { id: usuario_id, nombre: nombre_usuario, rol } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: 'El pedido debe contener al menos un item.' });
@@ -136,6 +138,34 @@ const updatePedido = async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
+        // --- INICIO DE VALIDACIÓN PARA EDICIÓN ---
+        const pedidoOriginalResult = await client.query('SELECT * FROM pedidos WHERE id = $1', [pedido_id]);
+        if (pedidoOriginalResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Pedido no encontrado.' });
+        }
+        const pedidoOriginal = pedidoOriginalResult.rows[0];
+
+        // Solo el creador del pedido o un admin pueden editarlo.
+        if (rol !== 'admin' && pedidoOriginal.usuario_id !== usuario_id) {
+            return res.status(403).json({ message: 'No tienes permiso para editar este pedido.' });
+        }
+
+        // Si no es admin, aplicamos las reglas de tiempo y estado.
+        if (rol !== 'admin') {
+            if (pedidoOriginal.estado !== 'pendiente') {
+                return res.status(403).json({ message: `No se puede editar un pedido que ya está en estado '${pedidoOriginal.estado}'.` });
+            }
+            const ahora = new Date();
+            const fechaCreacion = new Date(pedidoOriginal.fecha_creacion);
+            const doceHorasEnMs = 12 * 60 * 60 * 1000;
+
+            if ((ahora - fechaCreacion) > doceHorasEnMs) {
+                return res.status(403).json({ message: 'El tiempo para editar este pedido (12 horas) ha expirado.' });
+            }
+        }
+        // --- FIN DE VALIDACIÓN ---
+
 
         // 1. Actualizar las notas del pedido principal
         await client.query(
@@ -246,8 +276,8 @@ const getPedidoById = async (req, res) => {
         const pedidoQuery = `
             SELECT p.*, c.nombre_comercio, c.direccion, u.nombre as nombre_vendedor
             FROM pedidos p
-            JOIN clientes c ON p.cliente_id = c.id
-            JOIN usuarios u ON p.usuario_id = u.id
+            LEFT JOIN clientes c ON p.cliente_id = c.id
+            LEFT JOIN usuarios u ON p.usuario_id = u.id
             WHERE p.id = $1
         `;
         const pedidoResult = await pool.query(pedidoQuery, [id]);
@@ -255,7 +285,10 @@ const getPedidoById = async (req, res) => {
         if (pedidoResult.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
 
         const itemsQuery = `
-            SELECT * FROM pedido_items WHERE pedido_id = $1
+            SELECT pi.*, pr.stock as stock_actual 
+            FROM pedido_items pi
+            LEFT JOIN productos pr ON pi.producto_id = pr.id
+            WHERE pi.pedido_id = $1
         `;
         const itemsResult = await pool.query(itemsQuery, [id]);
 
@@ -298,6 +331,26 @@ const getPedidos = async (req, res) => {
     }
 };
 
+// NUEVA FUNCIÓN para obtener el historial de un vendedor
+const getMisPedidos = async (req, res) => {
+    const { id: usuario_id } = req.user;
+    try {
+        const query = `
+            SELECT p.id, p.fecha_creacion, p.estado, p.cliente_id, c.nombre_comercio
+            FROM pedidos p
+            LEFT JOIN clientes c ON p.cliente_id = c.id
+            WHERE p.usuario_id = $1
+            ORDER BY p.fecha_creacion DESC
+        `;
+        const { rows } = await pool.query(query, [usuario_id]);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error al obtener el historial de pedidos:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+
+
 // Copia esta función completa dentro de pedidos.controller.js
 
 const combinarPedidos = async (req, res) => {
@@ -311,7 +364,7 @@ const combinarPedidos = async (req, res) => {
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN'); [cite_start]// <-- Iniciamos la transacción [cite: 1]
+        await client.query('BEGIN'); // <-- Iniciamos la transacción
 
         // 1. Validar que todos los pedidos existan y pertenezcan al mismo cliente
         const pedidosOriginalesResult = await client.query(
@@ -368,16 +421,16 @@ const combinarPedidos = async (req, res) => {
             [usuario_id, nombre_usuario, 'COMBINAR_PEDIDOS', logDetail]
         );
 
-        await client.query('COMMIT'); [cite_start]// <-- Confirmamos todos los cambios [cite: 1]
+        await client.query('COMMIT'); // <-- Confirmamos todos los cambios
 
         res.status(201).json({ message: 'Pedidos combinados con éxito.', nuevoPedidoId });
 
     } catch (error) {
-        await client.query('ROLLBACK'); [cite_start]// <-- Revertimos todo si algo falla [cite: 1]
+        await client.query('ROLLBACK'); // <-- Revertimos todo si algo falla
         console.error('Error al combinar pedidos:', error);
         res.status(500).json({ message: error.message || 'Error interno del servidor al combinar pedidos.' });
     } finally {
-        client.release(); [cite_start]// <-- Liberamos la conexión [cite: 1]
+        client.release(); // <-- Liberamos la conexión
     }
 };
 
@@ -565,11 +618,12 @@ const updatePedidoNotas = async (req, res) => {
 module.exports = {
     createPedido,
     getPedidos,
+    getMisPedidos, // <-- NUEVA FUNCIÓN EXPORTADA
     getPedidoById,
     updatePedidoItems,
     updatePedidoEstado,
-    archivePedido,          // <-- AÑADIR ESTA LÍNEA
-    cleanupArchivedPedidos,  // <-- AÑADIR ESTA LÍNEA
+    archivePedido,
+    cleanupArchivedPedidos,
     updatePedido,
     updatePedidoNotas,
     unarchivePedido,
