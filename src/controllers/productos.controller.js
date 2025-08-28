@@ -131,8 +131,14 @@ const importProductos = async (req, res, next) => {
                 // Inicia la transacción principal para la importación
                 await client.query('BEGIN');
 
+                // ... dentro del bucle for ...
                 for (const row of resultados) {
-                    const sku = String(row.codigo_sku).trim();
+                    // NORMALIZACIÓN DEL SKU
+                    // Primero, lo tomamos como texto y quitamos espacios.
+                    let sku = String(row.codigo_sku).trim();
+                    // Luego, usamos una expresión regular para eliminar todos los ceros del principio.
+                    sku = sku.replace(/^0+/, '');
+                
                     const nombre = String(row.nombre).trim();
                     
                     // Lógica de negocio: El precio se trunca a un entero.
