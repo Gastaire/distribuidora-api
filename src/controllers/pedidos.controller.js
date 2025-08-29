@@ -9,7 +9,7 @@ const MAX_BACKUPS = 30;
 const ensureBackupDir = async () => {
     try {
         await fs.access(BACKUP_DIR);
-    } catch (error) {
+    } catch (error) => {
         await fs.mkdir(BACKUP_DIR, { recursive: true });
     }
 };
@@ -142,18 +142,24 @@ const updatePedido = async (req, res) => {
         // --- INICIO DE VALIDACIÓN PARA EDICIÓN ---
         const pedidoOriginalResult = await client.query('SELECT * FROM pedidos WHERE id = $1', [pedido_id]);
         if (pedidoOriginalResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(404).json({ message: 'Pedido no encontrado.' });
         }
         const pedidoOriginal = pedidoOriginalResult.rows[0];
 
         // Solo el creador del pedido o un admin pueden editarlo.
         if (rol !== 'admin' && pedidoOriginal.usuario_id !== usuario_id) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(403).json({ message: 'No tienes permiso para editar este pedido.' });
         }
 
         // Si no es admin, aplicamos las reglas de tiempo y estado.
         if (rol !== 'admin') {
             if (pedidoOriginal.estado !== 'pendiente') {
+                await client.query('ROLLBACK');
+                client.release();
                 return res.status(403).json({ message: `No se puede editar un pedido que ya está en estado '${pedidoOriginal.estado}'.` });
             }
             const ahora = new Date();
@@ -161,6 +167,8 @@ const updatePedido = async (req, res) => {
             const doceHorasEnMs = 12 * 60 * 60 * 1000;
 
             if ((ahora - fechaCreacion) > doceHorasEnMs) {
+                await client.query('ROLLBACK');
+                client.release();
                 return res.status(403).json({ message: 'El tiempo para editar este pedido (12 horas) ha expirado.' });
             }
         }
@@ -178,12 +186,14 @@ const updatePedido = async (req, res) => {
 
         // 3. Insertar los nuevos items con precios actualizados
         for (const item of items) {
-             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario FROM productos WHERE id = $1', [item.producto_id]);
+             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario, stock FROM productos WHERE id = $1', [item.producto_id]);
              if (productoResult.rows.length === 0) throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
-             const { nombre, codigo_sku, precio_unitario } = productoResult.rows[0];
+             const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
             
-             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)';
-             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, nombre, codigo_sku]);
+             const avisoFaltante = (stock === 'No');
+
+             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
+             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
         }
         
         // 4. Registrar la actividad
