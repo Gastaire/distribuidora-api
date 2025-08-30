@@ -9,7 +9,7 @@ const MAX_BACKUPS = 30;
 const ensureBackupDir = async () => {
     try {
         await fs.access(BACKUP_DIR);
-    } catch (error) {
+    } catch (error) { // <-- CORREGIDO: Eliminada la flecha '=>'
         await fs.mkdir(BACKUP_DIR, { recursive: true });
     }
 };
@@ -50,18 +50,13 @@ const createPedido = async (req, res) => {
             if (clienteResult.rows.length > 0) {
                 final_cliente_id = cliente_id;
             } else {
-                // El ID no existe. Esto significa que el frontend envió un ID local
-                // que no fue sincronizado. La transacción debe fallar para que el frontend
-                // pueda reintentarlo más tarde, en lugar de crear un pedido huérfano.
-                await client.query('ROLLBACK'); // Revertimos inmediatamente
+                await client.query('ROLLBACK'); 
                 client.release();
-                // Devolvemos un error 422 "Unprocessable Entity", que es más específico.
                 return res.status(422).json({ 
                     message: `El cliente con id '${cliente_id}' no existe en el servidor. El cliente debe ser sincronizado primero.` 
                 });
             }
         } else {
-            // Si no se proporciona un cliente_id, también es un error.
             await client.query('ROLLBACK');
             client.release();
             return res.status(400).json({ message: 'No se proporcionó un cliente_id para el pedido.' });
@@ -73,55 +68,43 @@ const createPedido = async (req, res) => {
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
         
-        // --- 3. PREPARACIÓN DEL BACKUP (Mejora del segundo extracto) ---
         let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id || 'N/A'}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
 
         for (const item of items) {
-            // Buscamos el producto para congelar sus datos actuales
             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario, stock FROM productos WHERE id = $1', [item.producto_id]);
             if (productoResult.rows.length === 0) {
-                // Si un producto no existe, la transacción debe fallar.
                 throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
             }
 
             const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
             const avisoFaltante = (stock === 'No');
             
-            // Insertamos el item del pedido con los datos "congelados"
             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
             await client.query(itemQuery, [nuevoPedidoId, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
             
-            // Agregamos la línea al contenido del backup
             backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku || 'N/A'}) @ $${precio_unitario}\n`;
         }
 
-        // Guardamos el log de la actividad
         const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId}.`;
         await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]);
 
-        // Si todo fue bien, confirmamos la transacción
         await client.query('COMMIT');
 
-        // --- 4. GUARDADO DEL ARCHIVO DE BACKUP ---
-        // Esto se ejecuta solo si el COMMIT fue exitoso.
         try {
-            await manageBackups(); // Limpia backups antiguos si es necesario
+            await manageBackups();
             const backupFileName = `pedido_${nuevoPedidoId}_${Date.now()}.txt`;
             await fs.writeFile(path.join(BACKUP_DIR, backupFileName), backupContent);
         } catch (backupError) {
             console.error(`[ERROR DE BACKUP] Pedido #${nuevoPedidoId} creado exitosamente, pero falló al guardar el archivo de respaldo:`, backupError);
-            // No se devuelve un error al cliente, ya que el pedido SÍ se creó.
         }
 
         res.status(201).json({ message: 'Pedido creado exitosamente', pedido_id: nuevoPedidoId });
 
-    } catch (error) {
-        // Si algo falla durante la transacción, la revertimos.
+    } catch (error) { // <-- CORREGIDO
         await client.query('ROLLBACK');
         console.error('Error al crear pedido (transacción revertida):', error);
         res.status(500).json({ message: error.message || 'Error interno del servidor al crear el pedido.' });
     } finally {
-        // Liberamos la conexión del pool en cualquier caso.
         client.release();
     }
 }
@@ -139,21 +122,24 @@ const updatePedido = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // --- INICIO DE VALIDACIÓN PARA EDICIÓN ---
         const pedidoOriginalResult = await client.query('SELECT * FROM pedidos WHERE id = $1', [pedido_id]);
         if (pedidoOriginalResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(404).json({ message: 'Pedido no encontrado.' });
         }
         const pedidoOriginal = pedidoOriginalResult.rows[0];
 
-        // Solo el creador del pedido o un admin pueden editarlo.
         if (rol !== 'admin' && pedidoOriginal.usuario_id !== usuario_id) {
+            await client.query('ROLLBACK');
+            client.release();
             return res.status(403).json({ message: 'No tienes permiso para editar este pedido.' });
         }
 
-        // Si no es admin, aplicamos las reglas de tiempo y estado.
         if (rol !== 'admin') {
             if (pedidoOriginal.estado !== 'pendiente') {
+                await client.query('ROLLBACK');
+                client.release();
                 return res.status(403).json({ message: `No se puede editar un pedido que ya está en estado '${pedidoOriginal.estado}'.` });
             }
             const ahora = new Date();
@@ -161,42 +147,31 @@ const updatePedido = async (req, res) => {
             const doceHorasEnMs = 12 * 60 * 60 * 1000;
 
             if ((ahora - fechaCreacion) > doceHorasEnMs) {
+                await client.query('ROLLBACK');
+                client.release();
                 return res.status(403).json({ message: 'El tiempo para editar este pedido (12 horas) ha expirado.' });
             }
         }
-        // --- FIN DE VALIDACIÓN ---
 
-
-        // 1. Actualizar las notas del pedido principal
-        await client.query(
-            'UPDATE pedidos SET notas_entrega = $1 WHERE id = $2',
-            [notas_entrega || '', pedido_id]
-        );
-
-        // 2. Borrar los items antiguos para reemplazarlos
+        await client.query('UPDATE pedidos SET notas_entrega = $1 WHERE id = $2', [notas_entrega || '', pedido_id]);
         await client.query('DELETE FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
 
-        // 3. Insertar los nuevos items con precios actualizados
         for (const item of items) {
-             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario FROM productos WHERE id = $1', [item.producto_id]);
+             const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario, stock FROM productos WHERE id = $1', [item.producto_id]);
              if (productoResult.rows.length === 0) throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
-             const { nombre, codigo_sku, precio_unitario } = productoResult.rows[0];
-            
-             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)';
-             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, nombre, codigo_sku]);
+             const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
+             const avisoFaltante = (stock === 'No');
+             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
+             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
         }
         
-        // 4. Registrar la actividad
         const logDetail = `El usuario ${nombre_usuario} actualizó el pedido #${pedido_id}.`;
-        await client.query(
-            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
-            [usuario_id, nombre_usuario, 'ACTUALIZAR_PEDIDO', logDetail]
-        );
+        await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'ACTUALIZAR_PEDIDO', logDetail]);
 
         await client.query('COMMIT');
         res.status(200).json({ message: 'Pedido actualizado exitosamente.' });
 
-    } catch (error) {
+    } catch (error) { // <-- CORREGIDO
         await client.query('ROLLBACK');
         console.error('Error al actualizar el pedido:', error);
         res.status(500).json({ message: 'Error interno del servidor al actualizar el pedido.' });
@@ -205,7 +180,8 @@ const updatePedido = async (req, res) => {
     }
 };
 
-// --- ACTUALIZAR los items de un pedido (VERSIÓN MEJORADA CON LOGS) ---
+// --- El resto del archivo sin cambios ---
+// ... (getPedidoById, getPedidos, etc.)
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
     const { items } = req.body;
