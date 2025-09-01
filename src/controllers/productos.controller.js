@@ -6,9 +6,6 @@ const { Readable } = require('stream');
 
 const getProductos = async (req, res, next) => {
     try {
-        // --- INICIO DEL CAMBIO ---
-        // Se reemplaza la conversión directa por una lógica condicional (CASE)
-        // que es más segura y maneja diferentes representaciones del stock.
         const query = `
             SELECT 
                 id, 
@@ -17,7 +14,7 @@ const getProductos = async (req, res, next) => {
                 descripcion, 
                 precio_unitario, 
                 CASE 
-                    WHEN lower(stock::text) = 'si' THEN 1
+                    WHEN unaccent(lower(stock::text)) = 'si' THEN 1
                     WHEN stock::text = '1' THEN 1
                     ELSE 0 
                 END as stock,
@@ -26,7 +23,6 @@ const getProductos = async (req, res, next) => {
             ORDER BY nombre ASC
         `;
         const { rows } = await db.query(query);
-        // --- FIN DEL CAMBIO ---
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error al obtener productos:', error);
