@@ -6,7 +6,10 @@ const { Readable } = require('stream');
 
 const getProductos = async (req, res, next) => {
     try {
-        const { rows } = await db.query('SELECT * FROM productos ORDER BY nombre ASC');
+        // --- INICIO DEL CAMBIO ---
+        // Se modifica la consulta para asegurar que 'stock' sea un número entero.
+        const { rows } = await db.query('SELECT id, codigo_sku, nombre, descripcion, precio_unitario, stock::INTEGER, imagen_url FROM productos ORDER BY nombre ASC');
+        // --- FIN DEL CAMBIO ---
         res.status(200).json(rows);
     } catch (error) {
         console.error('Error al obtener productos:', error);
