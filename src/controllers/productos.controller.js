@@ -14,7 +14,7 @@ const getProductos = async (req, res, next) => {
                 descripcion, 
                 precio_unitario, 
                 CASE 
-                    WHEN unaccent(lower(stock::text)) = 'si' THEN 1
+                    WHEN lower(stock::text) IN ('si', 'sí') THEN 1
                     WHEN stock::text = '1' THEN 1
                     ELSE 0 
                 END as stock,
