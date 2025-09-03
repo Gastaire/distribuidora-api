@@ -5,8 +5,11 @@ const { Readable } = require('stream');
 // --- FUNCIONES CRUD ESTÁNDAR (Sin cambios) ---
 
 const getProductos = async (req, res, next) => {
+    // Leemos el parámetro 'format' de la URL. Si no viene, será undefined.
+    const { format } = req.query;
+
     try {
-        // --- MEJORA: Ejecutamos dos consultas en paralelo para mayor eficiencia ---
+        // La consulta de productos se hace siempre.
         const productosPromise = db.query(`
             SELECT 
                 id, codigo_sku, nombre, descripcion, precio_unitario, 
@@ -18,26 +21,30 @@ const getProductos = async (req, res, next) => {
             FROM productos ORDER BY nombre ASC
         `);
         
-        const categoriasPromise = db.query(`
-            SELECT DISTINCT categoria FROM productos WHERE categoria IS NOT NULL AND categoria <> '' ORDER BY categoria ASC
-        `);
+        // --- LÓGICA DE COMPATIBILIDAD ---
+        if (format === 'full') {
+            // FORMATO NUEVO (para el panel de admin): pide explícitamente todos los datos.
+            const categoriasPromise = db.query(`
+                SELECT DISTINCT categoria FROM productos WHERE categoria IS NOT NULL AND categoria <> '' ORDER BY categoria ASC
+            `);
 
-        // Esperamos a que ambas consultas terminen
-        const [productosResult, categoriasResult] = await Promise.all([productosPromise, categoriasPromise]);
+            const [productosResult, categoriasResult] = await Promise.all([productosPromise, categoriasPromise]);
+            const productos = productosResult.rows;
+            const categorias = categoriasResult.rows.map(row => row.categoria);
 
-        // Extraemos las filas de cada resultado
-        const productos = productosResult.rows;
-        // Convertimos el array de objetos de categorías a un array de strings
-        const categorias = categoriasResult.rows.map(row => row.categoria);
+            res.status(200).json({
+                productos: productos,
+                categorias: categorias
+            });
 
-        // Devolvemos un objeto que contiene ambas listas
-        res.status(200).json({
-            productos: productos,
-            categorias: categorias
-        });
+        } else {
+            // FORMATO ANTIGUO (por defecto, para la app del vendedor y otros): solo productos.
+            const productosResult = await productosPromise;
+            res.status(200).json(productosResult.rows);
+        }
 
     } catch (error) {
-        console.error('Error al obtener productos y categorías:', error);
+        console.error('Error al obtener productos:', error);
         next(error);
     }
 };
