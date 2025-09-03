@@ -18,7 +18,8 @@ const getProductos = async (req, res, next) => {
                     WHEN stock::text = '1' THEN 1
                     ELSE 0 
                 END as stock,
-                imagen_url 
+                imagen_url,
+                categoria 
             FROM productos 
             ORDER BY nombre ASC
         `;
@@ -33,7 +34,24 @@ const getProductos = async (req, res, next) => {
 const getProductoById = async (req, res, next) => {
     const { id } = req.params;
     try {
-        const { rows } = await db.query('SELECT * FROM productos WHERE id = $1', [id]);
+        const query = `
+            SELECT 
+                id, 
+                codigo_sku, 
+                nombre, 
+                descripcion, 
+                precio_unitario, 
+                CASE 
+                    WHEN lower(stock::text) IN ('si', 'sí') THEN 1
+                    WHEN stock::text = '1' THEN 1
+                    ELSE 0 
+                END as stock,
+                imagen_url,
+                categoria 
+            FROM productos 
+            WHERE id = $1
+        `;
+        const { rows } = await db.query(query, [id]);
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
@@ -45,11 +63,11 @@ const getProductoById = async (req, res, next) => {
 };
 
 const createProducto = async (req, res, next) => {
-    const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
+    const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria } = req.body;
     try {
         const { rows } = await db.query(
-            'INSERT INTO productos (codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url]
+            'INSERT INTO productos (codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria]
         );
         res.status(201).json(rows[0]);
     } catch (error) {
@@ -60,11 +78,11 @@ const createProducto = async (req, res, next) => {
 
 const updateProducto = async (req, res, next) => {
     const { id } = req.params;
-    const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url } = req.body;
+    const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria } = req.body;
     try {
         const { rows } = await db.query(
-            'UPDATE productos SET codigo_sku = $1, nombre = $2, descripcion = $3, precio_unitario = $4, stock = $5, imagen_url = $6 WHERE id = $7 RETURNING *',
-            [codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, id]
+            'UPDATE productos SET codigo_sku = $1, nombre = $2, descripcion = $3, precio_unitario = $4, stock = $5, imagen_url = $6, categoria = $7 WHERE id = $8 RETURNING *',
+            [codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria, id]
         );
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Producto no encontrado' });
@@ -143,6 +161,8 @@ const importProductos = async (req, res, next) => {
             }
 
             const client = await db.pool.connect();
+            let creados = 0;
+            let actualizados = 0;
             try {
                 // Inicia la transacción principal para la importación
                 await client.query('BEGIN');
@@ -161,7 +181,7 @@ const importProductos = async (req, res, next) => {
                     const precio = parseInt(String(row.precio_unitario).replace(',', '.'), 10);
                     
                     // Lógica de negocio: El stock es 1 para "si" o 0 para cualquier otra cosa.
-                    const stock = (String(row.stock || '').toLowerCase().trim() === 'si') ? 1 : 0;
+                    const stock = (String(row.stock || '').toLowerCase().trim() === 'si') ? 'Sí' : 'No';
 
                     // **MEJORA: Usar INSERT ON CONFLICT para eficiencia y seguridad**
                     // Intenta insertar. Si ya existe un producto con el mismo `codigo_sku`, lo actualiza.
@@ -172,9 +192,15 @@ const importProductos = async (req, res, next) => {
                         DO UPDATE SET
                             nombre = EXCLUDED.nombre,
                             precio_unitario = EXCLUDED.precio_unitario,
-                            stock = EXCLUDED.stock;
+                            stock = EXCLUDED.stock
+                        RETURNING xmax;
                     `;
-                    await client.query(upsertQuery, [sku, nombre, precio, stock]);
+                    const result = await client.query(upsertQuery, [sku, nombre, precio, stock]);
+                    if (result.rows[0].xmax === '0') {
+                        creados++;
+                    } else {
+                        actualizados++;
+                    }
                 }
                 
                 // Si todo fue bien, confirma la transacción de importación
@@ -199,7 +225,8 @@ const importProductos = async (req, res, next) => {
 
                 res.status(200).json({
                     message: `Importación completada.`,
-                    procesados: resultados.length,
+                    creados: creados,
+                    actualizados: actualizados,
                     duplicadosEliminados: eliminados,
                     filasOmitidas: filasConError.length,
                     errores: filasConError
