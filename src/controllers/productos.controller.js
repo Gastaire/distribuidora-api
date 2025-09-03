@@ -6,27 +6,38 @@ const { Readable } = require('stream');
 
 const getProductos = async (req, res, next) => {
     try {
-        const query = `
+        // --- MEJORA: Ejecutamos dos consultas en paralelo para mayor eficiencia ---
+        const productosPromise = db.query(`
             SELECT 
-                id, 
-                codigo_sku, 
-                nombre, 
-                descripcion, 
-                precio_unitario, 
+                id, codigo_sku, nombre, descripcion, precio_unitario, 
                 CASE 
-                    WHEN lower(stock::text) IN ('si', 'sí') THEN 1
-                    WHEN stock::text = '1' THEN 1
-                    ELSE 0 
+                    WHEN lower(stock::text) = 'sí' THEN 'Sí'
+                    ELSE 'No'
                 END as stock,
-                imagen_url,
-                categoria 
-            FROM productos 
-            ORDER BY nombre ASC
-        `;
-        const { rows } = await db.query(query);
-        res.status(200).json(rows);
+                imagen_url, categoria 
+            FROM productos ORDER BY nombre ASC
+        `);
+        
+        const categoriasPromise = db.query(`
+            SELECT DISTINCT categoria FROM productos WHERE categoria IS NOT NULL AND categoria <> '' ORDER BY categoria ASC
+        `);
+
+        // Esperamos a que ambas consultas terminen
+        const [productosResult, categoriasResult] = await Promise.all([productosPromise, categoriasPromise]);
+
+        // Extraemos las filas de cada resultado
+        const productos = productosResult.rows;
+        // Convertimos el array de objetos de categorías a un array de strings
+        const categorias = categoriasResult.rows.map(row => row.categoria);
+
+        // Devolvemos un objeto que contiene ambas listas
+        res.status(200).json({
+            productos: productos,
+            categorias: categorias
+        });
+
     } catch (error) {
-        console.error('Error al obtener productos:', error);
+        console.error('Error al obtener productos y categorías:', error);
         next(error);
     }
 };
