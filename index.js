@@ -11,7 +11,7 @@ const usuariosRoutes = require('./src/routes/usuarios.routes');
 const dashboardRoutes = require('./src/routes/dashboard.routes');
 const logRoutes = require('./src/routes/logs.routes');
 const importRoutes = require('./src/routes/import.routes');
-const categoriaRoutes = require('./src/routes/categorias.routes'); // <-- AÑADIR ESTA LÍNEA
+const categoriaRoutes = require('./src/routes/categorias.routes'); // <-- AÑADIDO
 
 
 const app = express();
@@ -38,7 +38,7 @@ app.use('/api', usuariosRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api', logRoutes);
 app.use('/api', importRoutes);
-app.use('/api', categoriaRoutes); // <-- AÑADIR ESTA LÍNEA
+app.use('/api', categoriaRoutes); // <-- AÑADIDO
 
 
 // Iniciar el servidor
