@@ -12,6 +12,7 @@ const dashboardRoutes = require('./src/routes/dashboard.routes');
 const logRoutes = require('./src/routes/logs.routes');
 const importRoutes = require('./src/routes/import.routes');
 const categoriaRoutes = require('./src/routes/categorias.routes'); // <-- AÑADIDO
+const borradoresRoutes = require('./src/routes/borradores.routes');
 
 
 const app = express();
@@ -39,6 +40,7 @@ app.use('/api', dashboardRoutes);
 app.use('/api', logRoutes);
 app.use('/api', importRoutes);
 app.use('/api', categoriaRoutes); // <-- AÑADIDO
+app.use('/api', borradoresRoutes);
 
 
 // Iniciar el servidor
