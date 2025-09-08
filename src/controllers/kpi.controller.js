@@ -20,46 +20,65 @@ const getCategoryKpis = async (req, res, next) => {
     const client = await pool.connect();
     try {
         let queryParts = [];
-        const queryParams = [category];
+        const finalParams = [];
+        let paramIndex = 1;
 
-        // Construcción dinámica de la consulta de Pedidos
-        const pedidosQuery = `
-            SELECT 
-                pr.nombre,
-                SUM(pi.cantidad) as cantidad,
-                SUM(pi.cantidad * pi.precio_congelado) as monto
-            FROM pedido_items pi
-            JOIN pedidos p ON pi.pedido_id = p.id
-            JOIN productos pr ON pi.producto_id = pr.id
-            WHERE pr.categoria = $1
-              AND p.estado NOT IN ('cancelado', 'archivado', 'combinado')
-              ${startDate ? `AND p.fecha_creacion >= $${queryParams.push(startDate)}` : ''}
-              ${endDate ? `AND p.fecha_creacion <= $${queryParams.push(endDate)}` : ''}
-            GROUP BY pr.nombre
-        `;
-
-        // Construcción dinámica de la consulta de Ventas Presenciales
-        // Nota: Unimos por SKU, asumiendo que es el identificador común.
-        const presencialesQuery = `
-            SELECT 
-                vpi.nombre_producto as nombre,
-                SUM(vpi.cantidad) as cantidad,
-                SUM(vpi.cantidad * vpi.precio_final_unitario) as monto
-            FROM ventas_presenciales_items vpi
-            JOIN ventas_presenciales_comprobantes vpc ON vpi.comprobante_id = vpc.id
-            JOIN productos pr ON vpi.codigo_sku = pr.codigo_sku
-            WHERE pr.categoria = $1
-              ${startDate ? `AND vpc.fecha_venta >= $${queryParams.push(startDate)}` : ''}
-              ${endDate ? `AND vpc.fecha_venta <= $${queryParams.push(endDate)}` : ''}
-            GROUP BY vpi.nombre_producto
-        `;
-
-        if (channel === 'pedidos') {
+        // --- Lógica para la consulta de Pedidos ---
+        if (channel === 'pedidos' || channel === 'todos') {
+            const paramsForPedidos = [category];
+            let pedidosQuery = `
+                SELECT 
+                    pr.nombre,
+                    SUM(pi.cantidad) as cantidad,
+                    SUM(pi.cantidad * pi.precio_congelado) as monto
+                FROM pedido_items pi
+                JOIN pedidos p ON pi.pedido_id = p.id
+                JOIN productos pr ON pi.producto_id = pr.id
+                WHERE pr.categoria = $${paramIndex++}
+                  AND p.estado NOT IN ('cancelado', 'archivado', 'combinado')
+            `;
+            if (startDate) {
+                pedidosQuery += ` AND p.fecha_creacion >= $${paramIndex++}`;
+                paramsForPedidos.push(startDate);
+            }
+            if (endDate) {
+                pedidosQuery += ` AND p.fecha_creacion <= $${paramIndex++}`;
+                paramsForPedidos.push(endDate);
+            }
+            pedidosQuery += ' GROUP BY pr.nombre';
             queryParts.push(pedidosQuery);
-        } else if (channel === 'presencial') {
+            finalParams.push(...paramsForPedidos);
+        }
+
+        // --- Lógica para la consulta de Ventas Presenciales ---
+        if (channel === 'presencial' || channel === 'todos') {
+            const paramsForPresencial = [category];
+            let presencialesQuery = `
+                SELECT 
+                    vpi.nombre_producto as nombre,
+                    SUM(vpi.cantidad) as cantidad,
+                    SUM(vpi.cantidad * vpi.precio_final_unitario) as monto
+                FROM ventas_presenciales_items vpi
+                JOIN ventas_presenciales_comprobantes vpc ON vpi.comprobante_id = vpc.id
+                JOIN productos pr ON vpi.codigo_sku = pr.codigo_sku
+                WHERE pr.categoria = $${paramIndex++}
+            `;
+            if (startDate) {
+                presencialesQuery += ` AND vpc.fecha_venta >= $${paramIndex++}`;
+                paramsForPresencial.push(startDate);
+            }
+            if (endDate) {
+                presencialesQuery += ` AND vpc.fecha_venta <= $${paramIndex++}`;
+                paramsForPresencial.push(endDate);
+            }
+            presencialesQuery += ' GROUP BY vpi.nombre_producto';
             queryParts.push(presencialesQuery);
-        } else { // 'todos'
-            queryParts.push(pedidosQuery, presencialesQuery);
+            finalParams.push(...paramsForPresencial);
+        }
+        
+        // Si no hay partes de consulta, no hay nada que hacer
+        if(queryParts.length === 0) {
+            return res.status(200).json({ kpis: [], summary: { totalMonto: 0, totalCantidad: 0, totalProductos: 0 }, filters: req.query });
         }
 
         const fullQuery = `
@@ -73,12 +92,6 @@ const getCategoryKpis = async (req, res, next) => {
             GROUP BY nombre
             ORDER BY total_monto DESC
         `;
-        
-        // Re-ajustamos los parámetros para el UNION ALL si es necesario
-        let finalParams = [...queryParams];
-        if(channel === 'todos') {
-            finalParams = [queryParams[0], ...queryParams.slice(1), queryParams[0], ...queryParams.slice(1)];
-        }
         
         const { rows } = await client.query(fullQuery, finalParams);
         
