@@ -188,21 +188,21 @@ const importProductos = async (req, res, next) => {
                 // ... dentro del bucle for ...
                 for (const row of resultados) {
                     // NORMALIZACIÓN DEL SKU
-                    // Primero, lo tomamos como texto y quitamos espacios.
-                    let sku = String(row.codigo_sku).trim();
-                    // Luego, usamos una expresión regular para eliminar todos los ceros del principio.
-                    sku = sku.replace(/^0+/, '');
+                    let sku = String(row.codigo_sku).trim().replace(/^0+/, '');
                 
                     const nombre = String(row.nombre).trim();
-                    
-                    // Lógica de negocio: El precio se trunca a un entero.
                     const precio = parseInt(String(row.precio_unitario).replace(',', '.'), 10);
                     
-                    // Lógica de negocio: El stock es 1 para "si" o 0 para cualquier otra cosa.
-                    const stock = (String(row.stock || '').toLowerCase().trim() === 'si') ? 'Sí' : 'No';
+                    // --- AQUÍ ESTÁ LA MEJORA ---
+                    // Se crea la variable `stock` y solo se le asigna un valor si el CSV lo incluye.
+                    // Si no, se queda como `null`.
+                    let stock = null;
+                    if (row.stock !== undefined && row.stock !== null) {
+                        stock = (String(row.stock).toLowerCase().trim() === 'si') ? 'Sí' : 'No';
+                    }
 
-                    // **MEJORA: Usar INSERT ON CONFLICT para eficiencia y seguridad**
-                    // Intenta insertar. Si ya existe un producto con el mismo `codigo_sku`, lo actualiza.
+                    // **MEJORA CLAVE EN LA CONSULTA SQL**
+                    // La consulta ahora usa COALESCE para preservar el valor del stock si no se proporciona uno nuevo.
                     const upsertQuery = `
                         INSERT INTO productos (codigo_sku, nombre, precio_unitario, stock)
                         VALUES ($1, $2, $3, $4)
@@ -210,10 +210,11 @@ const importProductos = async (req, res, next) => {
                         DO UPDATE SET
                             nombre = EXCLUDED.nombre,
                             precio_unitario = EXCLUDED.precio_unitario,
-                            stock = EXCLUDED.stock
+                            stock = COALESCE($4, productos.stock) -- Si el nuevo stock ($4) es NULL, mantiene el valor antiguo (productos.stock)
                         RETURNING xmax;
                     `;
                     const result = await client.query(upsertQuery, [sku, nombre, precio, stock]);
+                    
                     if (result.rows[0].xmax === '0') {
                         creados++;
                     } else {
