@@ -11,8 +11,9 @@ const usuariosRoutes = require('./src/routes/usuarios.routes');
 const dashboardRoutes = require('./src/routes/dashboard.routes');
 const logRoutes = require('./src/routes/logs.routes');
 const importRoutes = require('./src/routes/import.routes');
-const categoriaRoutes = require('./src/routes/categorias.routes'); // <-- AÑADIDO
+const categoriaRoutes = require('./src/routes/categorias.routes');
 const borradoresRoutes = require('./src/routes/borradores.routes');
+const kpiRoutes = require('./src/routes/kpi.routes.js');
 
 
 const app = express();
@@ -39,8 +40,9 @@ app.use('/api', usuariosRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api', logRoutes);
 app.use('/api', importRoutes);
-app.use('/api', categoriaRoutes); // <-- AÑADIDO
+app.use('/api', categoriaRoutes);
 app.use('/api', borradoresRoutes);
+app.use('/api', kpiRoutes);
 
 
 // Iniciar el servidor
