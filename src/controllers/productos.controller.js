@@ -115,13 +115,21 @@ const updateProducto = async (req, res, next) => {
 const deleteProducto = async (req, res, next) => {
     const { id } = req.params;
     try {
-        const result = await db.query('DELETE FROM productos WHERE id = $1', [id]);
+        // --- INICIO DE LA MODIFICACIÓN: Cambiamos DELETE por UPDATE ---
+        const result = await db.query(
+            'UPDATE productos SET archivado = true WHERE id = $1', 
+            [id]
+        );
+        // --- FIN DE LA MODIFICACIÓN ---
+
         if (result.rowCount === 0) {
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
-        res.status(204).send();
+        // --- INICIO DE LA MODIFICACIÓN: Cambiamos el status code a 200 con un mensaje ---
+        res.status(200).json({ message: 'Producto archivado correctamente.' });
+        // --- FIN DE LA MODIFICACIÓN ---
     } catch (error) {
-        console.error(`Error al eliminar producto ${id}:`, error);
+        console.error(`Error al archivar producto ${id}:`, error);
         next(error);
     }
 };
