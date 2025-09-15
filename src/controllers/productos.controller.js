@@ -5,21 +5,36 @@ const { Readable } = require('stream');
 // --- FUNCIONES CRUD ESTÁNDAR (Sin cambios) ---
 
 const getProductos = async (req, res, next) => {
-    // Leemos el parámetro 'format' de la URL. Si no viene, será undefined.
-    const { format } = req.query;
+    // --- INICIO DE LA MODIFICACIÓN ---
+    // Leemos los parámetros de la URL
+    const { format, include_archived } = req.query;
+    // La protección de ruta nos da acceso al usuario y su rol
+    const { rol } = req.user;
 
     try {
-        // La consulta de productos se hace siempre.
-        const productosPromise = db.query(`
+        // Construimos la consulta base
+        let queryText = `
             SELECT 
                 id, codigo_sku, nombre, descripcion, precio_unitario, 
                 CASE 
                     WHEN lower(stock::text) = 'sí' THEN 'Sí'
                     ELSE 'No'
                 END as stock,
-                imagen_url, categoria 
-            FROM productos ORDER BY nombre ASC
-        `);
+                imagen_url, categoria, archivado
+            FROM productos 
+        `;
+
+        // Por defecto, ocultamos los archivados.
+        // Si el usuario es admin y pide verlos explícitamente, los incluimos.
+        if (rol !== 'admin' || include_archived !== 'true') {
+            queryText += ' WHERE archivado = false ';
+        }
+
+        queryText += ' ORDER BY nombre ASC';
+        
+        // La consulta de productos se hace siempre.
+        const productosPromise = db.query(queryText);
+        // --- FIN DE LA MODIFICACIÓN ---
         
         // --- LÓGICA DE COMPATIBILIDAD ---
         if (format === 'full') {
