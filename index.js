@@ -14,6 +14,7 @@ const importRoutes = require('./src/routes/import.routes');
 const categoriaRoutes = require('./src/routes/categorias.routes');
 const borradoresRoutes = require('./src/routes/borradores.routes');
 const kpiRoutes = require('./src/routes/kpi.routes.js');
+const diagnosticsRoutes = require('./src/routes/diagnostics.routes');
 
 
 const app = express();
@@ -43,6 +44,7 @@ app.use('/api', importRoutes);
 app.use('/api', categoriaRoutes);
 app.use('/api', borradoresRoutes);
 app.use('/api', kpiRoutes);
+app.use('/api', diagnosticsRoutes);
 
 
 // Iniciar el servidor
