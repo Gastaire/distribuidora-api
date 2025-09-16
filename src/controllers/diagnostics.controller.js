@@ -161,38 +161,74 @@ const executeFixOrphanedItems = async (req, res) => {
         await client.query('BEGIN');
 
         let updatedCount = 0;
+        let mergedCount = 0;
+        let deletedOrphans = 0;
 
-        // Iterar sobre cada candidato y actualizar su producto_id
         for (const candidate of candidates) {
-            const result = await client.query(
-                'UPDATE pedido_items SET producto_id = $1 WHERE id = $2',
-                [candidate.new_producto_id, candidate.pedido_item_id]
+            const { pedido_id, new_producto_id, pedido_item_id, cantidad: orphan_quantity } = candidate;
+
+            // 1. Verificar si ya existe un item para el nuevo producto en el mismo pedido.
+            const existingItemResult = await client.query(
+                'SELECT id FROM pedido_items WHERE pedido_id = $1 AND producto_id = $2',
+                [pedido_id, new_producto_id]
             );
-            
-            if (result.rowCount > 0) {
-                updatedCount++;
+
+            if (existingItemResult.rows.length > 0) {
+                // --- CASO DE CONFLICTO: Combinar cantidades ---
+                const existingItemId = existingItemResult.rows[0].id;
+                
+                // Sumar la cantidad del huérfano al item existente
+                await client.query(
+                    'UPDATE pedido_items SET cantidad = cantidad + $1 WHERE id = $2',
+                    [orphan_quantity, existingItemId]
+                );
+                mergedCount++;
+
+                // Eliminar el item huérfano
+                const deleteResult = await client.query(
+                    'DELETE FROM pedido_items WHERE id = $1',
+                    [pedido_item_id]
+                );
+                if (deleteResult.rowCount > 0) {
+                    deletedOrphans++;
+                }
+
+            } else {
+                // --- CASO NORMAL: Actualizar el producto_id del huérfano ---
+                const updateResult = await client.query(
+                    'UPDATE pedido_items SET producto_id = $1 WHERE id = $2',
+                    [new_producto_id, pedido_item_id]
+                );
+                
+                if (updateResult.rowCount > 0) {
+                    updatedCount++;
+                }
             }
         }
 
+        const totalAffected = updatedCount + mergedCount;
+
         // Registrar la actividad en la tabla de logs
-        const logDetail = `El usuario ${nombre_usuario} re-vinculó ${updatedCount} items huérfanos de pedidos.`;
-        await client.query(
-            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
-            [usuario_id, nombre_usuario, 'CORREGIR_ITEMS_HUERFANOS', logDetail]
-        );
+        if (totalAffected > 0) {
+            const logDetail = `El usuario ${nombre_usuario} re-vinculó ${totalAffected} items huérfanos. (${updatedCount} actualizados, ${mergedCount} combinados).`;
+            await client.query(
+                'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+                [usuario_id, nombre_usuario, 'CORREGIR_ITEMS_HUERFANOS', logDetail]
+            );
+        }
 
         await client.query('COMMIT');
 
         res.status(200).json({
             success: true,
-            message: 'Corrección de items huérfanos completada.',
-            updatedCount
+            message: `Corrección de items huérfanos completada.`,
+            updatedCount: totalAffected // Devolvemos el total afectado para el modal
         });
 
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error fixing orphaned items:', error);
-        res.status(500).json({ message: 'Error al corregir items huérfanos' });
+        res.status(500).json({ message: 'Error al corregir items huérfanos: ' + error.message });
     } finally {
         client.release();
     }
