@@ -115,7 +115,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
                     } else if (orphan.codigo_sku && productsBySku.has(normalizeSku(orphan.codigo_sku))) {
                         reason = 'SKU_DUPLICADO';
                     }
-                }
+                } // <-- ESTA ES LA LLAVE QUE FALTABA
                 
                 needsIntervention.push({
                     ...orphan,
