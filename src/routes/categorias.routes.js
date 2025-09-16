@@ -1,28 +1,14 @@
 const { Router } = require('express');
-const { 
-    renameCategoria,
-    manageProducts
-} = require('../controllers/categorias.controller');
+const { analyzeAndPreviewOrphanedItems, executeFixOrphanedItems, fixSingleOrphanedItem } = require('../controllers/diagnostics.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
 const router = Router();
 
-// Todas las rutas de gestión de categorías son solo para administradores.
-// Usamos protect para asegurar que el usuario esté logueado y authorize('admin') para verificar su rol.
+// Rutas existentes
+router.get('/diagnostics/orphaned-items', protect, authorize('admin'), analyzeAndPreviewOrphanedItems);
+router.post('/diagnostics/fix-orphans', protect, authorize('admin'), executeFixOrphanedItems);
 
-/**
- * @route PUT /api/categorias/rename
- * @desc Renombrar una categoría existente.
- * @access Private (Admin)
- */
-router.put('/categorias/rename', protect, authorize('admin'), renameCategoria);
-
-/**
- * @route PUT /api/categorias/manage-products
- * @desc Gestiona masivamente los productos asignados a una categoría.
- * @access Private (Admin)
- */
-router.put('/categorias/manage-products', protect, authorize('admin'), manageProducts);
-
+// Nueva ruta para corrección individual
+router.post('/diagnostics/fix-single-orphan', protect, authorize('admin'), fixSingleOrphanedItem);
 
 module.exports = router;
