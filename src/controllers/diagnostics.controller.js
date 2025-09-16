@@ -42,7 +42,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             productsByName.get(nameKey).push(product);
         }
 
-        // 2. Obtener todos los items huérfanos (incluyendo su SKU original si existe)
+       // 2. Obtener todos los items huérfanos (incluyendo su SKU original si existe)
         const { rows: orphanedItems } = await client.query(`
             SELECT
                 pi.id as pedido_item_id,
@@ -50,7 +50,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
                 pi.producto_id as old_producto_id,
                 pi.nombre_producto,
                 pi.codigo_sku,
-                c.nombre_comercio
+                COALESCE(c.nombre_comercio, 'Cliente Desconocido') as nombre_comercio
             FROM
                 pedido_items pi
             LEFT JOIN
@@ -58,13 +58,11 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             LEFT JOIN
                 pedidos ped ON pi.pedido_id = ped.id
             LEFT JOIN
-                borradores b ON ped.borrador_id = b.id
-            LEFT JOIN
-                clientes c ON b.cliente_id = c.id
+                clientes c ON ped.cliente_id = c.id
             WHERE
                 p.id IS NULL
         `);
-
+        
         // 3. Clasificar los huérfanos
         const automaticFixCandidates = [];
         const manualFixCandidates = [];
