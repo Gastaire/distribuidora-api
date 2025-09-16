@@ -89,7 +89,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             }
 
             // --- Estrategia 2: Coincidencia por Nombre (Confianza Media) ---
-            if (!matchFound) {
+            if (!matchFound && orphan.nombre_producto) { // <-- ¡AQUÍ ESTÁ LA CORRECCIÓN!
                 const nameKey = orphan.nombre_producto.trim().toLowerCase();
                 const nameMatches = productsByName.get(nameKey);
                 if (nameMatches && nameMatches.length === 1) {
@@ -105,22 +105,24 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             
             // --- Estrategia 3: Casos para Intervención Manual ---
             if (!matchFound) {
-                const nameKey = orphan.nombre_producto.trim().toLowerCase();
-                const nameMatches = productsByName.get(nameKey);
                 let reason = 'SIN_COINCIDENCIA';
-                if (nameMatches && nameMatches.length > 1) {
-                    reason = 'NOMBRE_DUPLICADO';
-                } else if (orphan.codigo_sku && productsBySku.has(normalizeSku(orphan.codigo_sku))) {
-                    reason = 'SKU_DUPLICADO';
+                let nameMatches = [];
+                if (orphan.nombre_producto) { // <-- ¡Y AQUÍ TAMBIÉN!
+                    const nameKey = orphan.nombre_producto.trim().toLowerCase();
+                    nameMatches = productsByName.get(nameKey) || [];
+                    if (nameMatches.length > 1) {
+                        reason = 'NOMBRE_DUPLICADO';
+                    } else if (orphan.codigo_sku && productsBySku.has(normalizeSku(orphan.codigo_sku))) {
+                        reason = 'SKU_DUPLICADO';
+                    }
                 }
                 
                 needsIntervention.push({
                     ...orphan,
                     reason,
-                    possible_matches: nameMatches || []
+                    possible_matches: nameMatches
                 });
             }
-        }
 
         res.status(200).json({
             automaticFixCandidates,
