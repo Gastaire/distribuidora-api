@@ -1,48 +1,23 @@
-const db = require('../db');
+const { pool } = require('../db');
 
 /**
- * @description Normaliza un SKU eliminando los ceros iniciales para una comparación consistente.
- * Ej: '0480' -> '480', '00123' -> '123'
- * @param {string} sku El SKU a normalizar.
- * @returns {string} El SKU normalizado.
+ * Analiza los items huérfanos (productos que fueron eliminados pero siguen en pedidos)
+ * y los clasifica en diferentes categorías según la posibilidad de arreglo automático.
  */
-const normalizeSku = (sku) => {
-    if (!sku || typeof sku !== 'string') return '';
-    return sku.replace(/^0+/, '');
-};
+const analyzeAndPreviewOrphanedItems = async (req, res) => {
+    const client = await pool.connect();
 
-
-/**
- * @description Analiza los items de pedidos huérfanos y los clasifica en categorías según la probabilidad de corrección.
- * @returns Un objeto con tres listas: `automaticFixCandidates`, `manualFixCandidates`, y `needsIntervention`.
- */
-const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
-    const client = await db.pool.connect();
     try {
-        // 1. Obtener todos los productos activos y organizarlos para búsqueda rápida
-        const { rows: activeProducts } = await client.query('SELECT id, nombre, codigo_sku FROM productos WHERE archivado = false');
-        
-        const productsBySku = new Map();
-        const productsByName = new Map();
+        await client.query('BEGIN');
 
-        for (const product of activeProducts) {
-            // Mapeo por SKU normalizado
-            if (product.codigo_sku) {
-                const normalized = normalizeSku(product.codigo_sku);
-                if (!productsBySku.has(normalized)) {
-                    productsBySku.set(normalized, []);
-                }
-                productsBySku.get(normalized).push(product);
-            }
-            // Mapeo por nombre
-            const nameKey = product.nombre.trim().toLowerCase();
-            if (!productsByName.has(nameKey)) {
-                productsByName.set(nameKey, []);
-            }
-            productsByName.get(nameKey).push(product);
-        }
+        // 1. Obtener todos los productos activos para comparar
+        const { rows: activeProducts } = await client.query(`
+            SELECT id, nombre, codigo_sku
+            FROM productos
+            WHERE archivado = false
+        `);
 
-       // 2. Obtener todos los items huérfanos (incluyendo su SKU original si existe)
+        // 2. Obtener todos los items huérfanos (incluyendo su SKU original si existe)
         const { rows: orphanedItems } = await client.query(`
             SELECT
                 pi.id as pedido_item_id,
@@ -62,34 +37,60 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             WHERE
                 p.id IS NULL
         `);
-        
-        // 3. Clasificar los huérfanos
+
+        // 3. Normalizar los SKUs para facilitar la comparación
+        const normalizeSku = (sku) => {
+            if (!sku) return '';
+            return String(sku).trim().toLowerCase().replace(/^0+/, '');
+        };
+
+        // 4. Crear mapas para búsqueda rápida
+        const productsBySku = new Map();
+        const productsByName = new Map();
+
+        activeProducts.forEach(product => {
+            // Mapa de SKU -> producto
+            if (product.codigo_sku) {
+                const normalizedSku = normalizeSku(product.codigo_sku);
+                if (normalizedSku) {
+                    productsBySku.set(normalizedSku, product);
+                }
+            }
+
+            // Mapa de nombre -> [productos]
+            const nameKey = product.nombre.trim().toLowerCase();
+            if (!productsByName.has(nameKey)) {
+                productsByName.set(nameKey, []);
+            }
+            productsByName.get(nameKey).push(product);
+        });
+
+        // 5. Clasificar cada item huérfano en categorías
         const automaticFixCandidates = [];
         const manualFixCandidates = [];
         const needsIntervention = [];
 
-        for (const orphan of orphanedItems) {
+        orphanedItems.forEach(orphan => {
             let matchFound = false;
 
-            // --- Estrategia 1: Coincidencia por SKU (Alta Confianza) ---
+            // --- Estrategia 1: Coincidencia por SKU (Confianza Alta) ---
             if (orphan.codigo_sku) {
-                const normalizedOrphanSku = normalizeSku(orphan.codigo_sku);
-                const skuMatches = productsBySku.get(normalizedOrphanSku);
-                if (skuMatches && skuMatches.length === 1) {
+                const normalizedSku = normalizeSku(orphan.codigo_sku);
+                if (normalizedSku && productsBySku.has(normalizedSku)) {
+                    const matchedProduct = productsBySku.get(normalizedSku);
                     automaticFixCandidates.push({
-                        pedido_item_id: orphan.pedido_item_id,
-                        old_producto_id: orphan.old_producto_id,
-                        new_producto_id: skuMatches[0].id,
+                        ...orphan,
+                        new_producto_id: matchedProduct.id,
                         nombre_producto_huerfano: orphan.nombre_producto,
-                        nombre_producto_nuevo: skuMatches[0].nombre,
-                        match_type: 'SKU_UNICO'
+                        nombre_producto_nuevo: matchedProduct.nombre,
+                        match_type: 'SKU'
                     });
                     matchFound = true;
                 }
             }
 
             // --- Estrategia 2: Coincidencia por Nombre (Confianza Media) ---
-            if (!matchFound && orphan.nombre_producto) { // <-- ¡AQUÍ ESTÁ LA CORRECCIÓN!
+            if (!matchFound && orphan.nombre_producto) {
                 const nameKey = orphan.nombre_producto.trim().toLowerCase();
                 const nameMatches = productsByName.get(nameKey);
                 if (nameMatches && nameMatches.length === 1) {
@@ -107,7 +108,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             if (!matchFound) {
                 let reason = 'SIN_COINCIDENCIA';
                 let nameMatches = [];
-                if (orphan.nombre_producto) { // <-- ¡Y AQUÍ TAMBIÉN!
+                if (orphan.nombre_producto) {
                     const nameKey = orphan.nombre_producto.trim().toLowerCase();
                     nameMatches = productsByName.get(nameKey) || [];
                     if (nameMatches.length > 1) {
@@ -115,7 +116,7 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
                     } else if (orphan.codigo_sku && productsBySku.has(normalizeSku(orphan.codigo_sku))) {
                         reason = 'SKU_DUPLICADO';
                     }
-                } // <-- ESTA ES LA LLAVE QUE FALTABA
+                }
                 
                 needsIntervention.push({
                     ...orphan,
@@ -123,76 +124,79 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
                     possible_matches: nameMatches
                 });
             }
+        });
+
+        await client.query('COMMIT');
 
         res.status(200).json({
+            totalOrphanedItems: orphanedItems.length,
             automaticFixCandidates,
             manualFixCandidates,
             needsIntervention
         });
 
     } catch (error) {
-        console.error('Error al analizar items huérfanos:', error);
-        next(error);
+        await client.query('ROLLBACK');
+        console.error('Error analyzing orphaned items:', error);
+        res.status(500).json({ message: 'Error al analizar items huérfanos' });
     } finally {
         client.release();
     }
 };
 
-
 /**
- * @description Ejecuta la corrección de items huérfanos actualizando su `producto_id`.
- * Recibe una lista de candidatos a corregir.
+ * Ejecuta la corrección automática para los items huérfanos que tienen una coincidencia de alta confianza.
  */
-const executeFixOrphanedItems = async (req, res, next) => {
+const executeFixOrphanedItems = async (req, res) => {
     const { candidates } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
-    if (!Array.isArray(candidates) || candidates.length === 0) {
-        return res.status(400).json({ message: 'No se proporcionaron candidatos para la corrección.' });
+    if (!candidates || !Array.isArray(candidates) || candidates.length === 0) {
+        return res.status(400).json({ message: 'No se proporcionaron candidatos para corrección.' });
     }
 
-    const client = await db.pool.connect();
-    let updatedCount = 0;
+    const client = await pool.connect();
+
     try {
         await client.query('BEGIN');
 
-        for (const candidate of candidates) {
-            const { pedido_item_id, new_producto_id } = candidate;
-            
-            // Verificación de seguridad
-            if (!pedido_item_id || !new_producto_id) {
-                throw new Error(`Candidato inválido: ${JSON.stringify(candidate)}`);
-            }
+        let updatedCount = 0;
 
+        // Iterar sobre cada candidato y actualizar su producto_id
+        for (const candidate of candidates) {
             const result = await client.query(
                 'UPDATE pedido_items SET producto_id = $1 WHERE id = $2',
-                [new_producto_id, pedido_item_id]
+                [candidate.new_producto_id, candidate.pedido_item_id]
             );
-            updatedCount += result.rowCount;
+            
+            if (result.rowCount > 0) {
+                updatedCount++;
+            }
         }
-        
-        const logDetail = `El usuario ${nombre_usuario} ejecutó una corrección automática de integridad, revinculando ${updatedCount} items de pedidos huérfanos.`;
+
+        // Registrar la actividad en la tabla de logs
+        const logDetail = `El usuario ${nombre_usuario} re-vinculó ${updatedCount} items huérfanos de pedidos.`;
         await client.query(
             'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
-            [usuario_id, nombre_usuario, 'CORREGIR_INTEGRIDAD', logDetail]
+            [usuario_id, nombre_usuario, 'CORREGIR_ITEMS_HUERFANOS', logDetail]
         );
 
         await client.query('COMMIT');
 
         res.status(200).json({
-            message: `Proceso completado. Se corrigieron exitosamente ${updatedCount} items.`,
+            success: true,
+            message: 'Corrección de items huérfanos completada.',
             updatedCount
         });
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error durante la ejecución de la corrección de huérfanos:', error);
-        next(error);
+        console.error('Error fixing orphaned items:', error);
+        res.status(500).json({ message: 'Error al corregir items huérfanos' });
     } finally {
         client.release();
     }
 };
-
 
 module.exports = {
     analyzeAndPreviewOrphanedItems,
