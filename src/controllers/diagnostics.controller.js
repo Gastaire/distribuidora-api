@@ -56,9 +56,11 @@ const analyzeAndPreviewOrphanedItems = async (req, res, next) => {
             LEFT JOIN
                 productos p ON pi.producto_id = p.id
             LEFT JOIN
-                pedidos p_pedido ON pi.pedido_id = p_pedido.id
+                pedidos ped ON pi.pedido_id = ped.id
             LEFT JOIN
-                clientes c ON p_pedido.cliente_id = c.id
+                borradores b ON ped.borrador_id = b.id
+            LEFT JOIN
+                clientes c ON b.cliente_id = c.id
             WHERE
                 p.id IS NULL
         `);
