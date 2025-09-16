@@ -19,4 +19,7 @@ router.get('/diagnostics/orphaned-items', protect, authorize('admin'), analyzeAn
 router.post('/diagnostics/fix-orphans', protect, authorize('admin'), executeFixOrphanedItems);
 
 
+// Nueva ruta para corrección individual
+router.post('/diagnostics/fix-single-orphan', protect, authorize('admin'), fixSingleOrphanedItem);
+
 module.exports = router;
