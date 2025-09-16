@@ -248,6 +248,85 @@ const executeFixOrphanedItems = async (req, res) => {
     }
 };
 
+/**
+ * Corrige un único item huérfano asignándole un nuevo producto.
+ * Maneja conflictos de duplicados combinando cantidades.
+ */
+const fixSingleOrphanedItem = async (req, res) => {
+    const { pedido_item_id, new_producto_id } = req.body;
+    const { id: usuario_id, nombre: nombre_usuario } = req.user;
+
+    if (!pedido_item_id || !new_producto_id) {
+        return res.status(400).json({ message: 'Se requieren pedido_item_id y new_producto_id.' });
+    }
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Obtener la información del item huérfano (pedido_id y cantidad)
+        const orphanResult = await client.query(
+            'SELECT pedido_id, cantidad, nombre_producto FROM pedido_items WHERE id = $1',
+            [pedido_item_id]
+        );
+
+        if (orphanResult.rows.length === 0) {
+            throw new Error(`El item de pedido huérfano con ID ${pedido_item_id} no fue encontrado.`);
+        }
+        const { pedido_id, cantidad: orphan_quantity, nombre_producto: orphan_name } = orphanResult.rows[0];
+
+        // 2. Verificar si ya existe un item para el nuevo producto en el mismo pedido.
+        const existingItemResult = await client.query(
+            'SELECT id FROM pedido_items WHERE pedido_id = $1 AND producto_id = $2',
+            [pedido_id, new_producto_id]
+        );
+
+        let action_taken = '';
+
+        if (existingItemResult.rows.length > 0) {
+            // --- CASO DE CONFLICTO: Combinar cantidades ---
+            const existingItemId = existingItemResult.rows[0].id;
+            await client.query(
+                'UPDATE pedido_items SET cantidad = cantidad + $1 WHERE id = $2',
+                [orphan_quantity, existingItemId]
+            );
+            await client.query('DELETE FROM pedido_items WHERE id = $1', [pedido_item_id]);
+            action_taken = 'combinado';
+        } else {
+            // --- CASO NORMAL: Actualizar el producto_id del huérfano ---
+            await client.query(
+                'UPDATE pedido_items SET producto_id = $1 WHERE id = $2',
+                [new_producto_id, pedido_item_id]
+            );
+            action_taken = 'actualizado';
+        }
+
+        // 3. Registrar la actividad
+        const newProductResult = await client.query('SELECT nombre FROM productos WHERE id = $1', [new_producto_id]);
+        const new_product_name = newProductResult.rows[0]?.nombre || `ID ${new_producto_id}`;
+        
+        const logDetail = `El usuario ${nombre_usuario} corrigió manualmente un item huérfano en el pedido #${pedido_id}. '${orphan_name}' fue ${action_taken} con '${new_product_name}'.`;
+        await client.query(
+            'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
+            [usuario_id, nombre_usuario, 'CORREGIR_ITEM_HUERFANO', logDetail]
+        );
+
+        await client.query('COMMIT');
+
+        res.status(200).json({
+            success: true,
+            message: `Item corregido exitosamente (acción: ${action_taken}).`
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error fixing single orphaned item:', error);
+        res.status(500).json({ message: error.message || 'Error al corregir el item huérfano.' });
+    } finally {
+        client.release();
+    }
+};
+
 module.exports = {
     analyzeAndPreviewOrphanedItems,
     executeFixOrphanedItems
