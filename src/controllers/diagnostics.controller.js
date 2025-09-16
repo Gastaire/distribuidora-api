@@ -165,7 +165,21 @@ const executeFixOrphanedItems = async (req, res) => {
         let deletedOrphans = 0;
 
         for (const candidate of candidates) {
-            const { pedido_id, new_producto_id, pedido_item_id, cantidad: orphan_quantity } = candidate;
+            const { pedido_id, new_producto_id, pedido_item_id } = candidate;
+            
+            // NUEVO: Obtenemos la cantidad del item huérfano directamente de la base de datos
+            const orphanItemResult = await client.query(
+                'SELECT cantidad FROM pedido_items WHERE id = $1',
+                [pedido_item_id]
+            );
+            
+            // Si no podemos obtener la cantidad, saltamos este item
+            if (orphanItemResult.rows.length === 0) {
+                console.warn(`Item huérfano no encontrado: ${pedido_item_id}`);
+                continue;
+            }
+            
+            const orphan_quantity = orphanItemResult.rows[0].cantidad;
 
             // 1. Verificar si ya existe un item para el nuevo producto en el mismo pedido.
             const existingItemResult = await client.query(
