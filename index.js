@@ -23,7 +23,7 @@ const PORT = process.env.API_PORT || 4000;
 // --- Middlewares ---
 // Se deja la configuración de CORS más simple, ya que Traefik se encarga del resto.
 app.use(cors()); 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 
 // Ruta principal para verificar que la API está funcionando
