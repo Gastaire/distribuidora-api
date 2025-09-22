@@ -261,7 +261,7 @@ const getPedidoById = async (req, res) => {
         if (pedidoResult.rows.length === 0) return res.status(404).json({ message: 'Pedido no encontrado' });
 
         const itemsQuery = `
-            SELECT pi.*, pr.stock as stock_actual 
+            SELECT pi.*, pr.stock as stock_actual, pr.categoria 
             FROM pedido_items pi
             LEFT JOIN productos pr ON pi.producto_id = pr.id
             WHERE pi.pedido_id = $1
