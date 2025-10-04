@@ -143,9 +143,37 @@ const setListaActiva = async (req, res, next) => {
 };
 
 
+/**
+ * @description Obtiene TODOS los datos de listas de precios para sincronización masiva.
+ * Diseñado para ser llamado por la app del vendedor. Devuelve todas las listas y todos los items
+ * en un solo objeto para minimizar las peticiones de red.
+ */
+const getAllDataForSync = async (req, res, next) => {
+    try {
+        const listasQuery = 'SELECT id, nombre, fecha_creacion, activa FROM listas_de_precios';
+        const itemsQuery = 'SELECT lista_id, producto_id, precio FROM lista_precios_items';
+
+        // Ejecutamos ambas consultas en paralelo para mayor eficiencia
+        const [listasResult, itemsResult] = await Promise.all([
+            pool.query(listasQuery),
+            pool.query(itemsQuery)
+        ]);
+
+        res.status(200).json({
+            listas: listasResult.rows,
+            items: itemsResult.rows
+        });
+    } catch (error) {
+        console.error('Error al obtener datos de listas de precios para sincronización:', error);
+        next(error);
+    }
+};
+
+
 module.exports = {
     getListasDePrecios,
     getListaDePreciosById,
     createListaDePrecios,
-    setListaActiva
+    setListaActiva,
+    getAllDataForSync
 };
