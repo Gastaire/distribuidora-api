@@ -15,6 +15,7 @@ const categoriaRoutes = require('./src/routes/categorias.routes');
 const borradoresRoutes = require('./src/routes/borradores.routes');
 const kpiRoutes = require('./src/routes/kpi.routes.js');
 const diagnosticsRoutes = require('./src/routes/diagnostics.routes');
+const listasPreciosRoutes = require('./src/routes/listas-precios.routes');
 
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api', categoriaRoutes);
 app.use('/api', borradoresRoutes);
 app.use('/api', kpiRoutes);
 app.use('/api', diagnosticsRoutes);
+app.use('/api', listasPreciosRoutes);
 
 
 // Iniciar el servidor
