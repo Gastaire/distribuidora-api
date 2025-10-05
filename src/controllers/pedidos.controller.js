@@ -28,68 +28,77 @@ const manageBackups = async () => {
 
 // --- CREAR un nuevo pedido (VERSIÓN MEJORADA) ---
 const createPedido = async (req, res) => {
-    const { cliente_id, items, notas_entrega } = req.body;
+    // --- CAMBIO 1: Añadir lista_precios_id al destructuring ---
+    const { cliente_id, items, notas_entrega, lista_precios_id } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: 'El pedido debe contener al menos un item.' });
     }
+    // --- CAMBIO 2: Validar que se haya enviado la lista de precios ---
+    if (!lista_precios_id) {
+        return res.status(400).json({ message: 'No se especificó una lista de precios para el pedido.' });
+    }
 
     const client = await pool.connect();
     
-    // Variables finales que se usarán para la inserción y el backup.
     let final_cliente_id = null;
     let final_notas_entrega = notas_entrega || '';
 
     try {
-        await client.query('BEGIN'); // <-- Inicia la transacción
+        await client.query('BEGIN');
 
-        // --- 1. VALIDACIÓN INTELIGENTE DEL CLIENTE ---
-        if (cliente_id) {
-            const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
-            if (clienteResult.rows.length > 0) {
-                final_cliente_id = cliente_id;
-            } else {
-                await client.query('ROLLBACK'); 
-                client.release();
-                return res.status(422).json({ 
-                    message: `El cliente con id '${cliente_id}' no existe en el servidor. El cliente debe ser sincronizado primero.` 
-                });
-            }
-        } else {
-            await client.query('ROLLBACK');
-            client.release();
-            return res.status(400).json({ message: 'No se proporcionó un cliente_id para el pedido.' });
+        // --- 1. VALIDACIÓN INTELIGENTE (CLIENTE Y LISTA DE PRECIOS) ---
+        const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
+        if (clienteResult.rows.length === 0) {
+            throw new Error(`El cliente con id '${cliente_id}' no existe en el servidor.`);
+        }
+        final_cliente_id = cliente_id;
+
+        const listaResult = await client.query('SELECT id FROM listas_de_precios WHERE id = $1', [lista_precios_id]);
+        if (listaResult.rows.length === 0) {
+            throw new Error(`La lista de precios con id '${lista_precios_id}' no existe.`);
         }
 
-        // --- 2. INSERCIÓN EN LA BASE DE DATOS ---
-        const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega) VALUES ($1, $2, $3, $4) RETURNING id, fecha_creacion';
-        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega]);
+        // --- 2. INSERCIÓN DEL PEDIDO CON LA LISTA DE PRECIOS ---
+        // --- CAMBIO 3: Añadir lista_precios_id a la inserción del pedido ---
+        const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega, lista_precios_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, fecha_creacion';
+        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega, lista_precios_id]);
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
         
-        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id || 'N/A'}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
+        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${lista_precios_id}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
 
         for (const item of items) {
-            const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario, stock FROM productos WHERE id = $1', [item.producto_id]);
-            if (productoResult.rows.length === 0) {
-                throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
+            // --- CAMBIO 4: Obtener el precio de la lista de precios, no de la tabla de productos ---
+            const precioQuery = `
+                SELECT li.precio, p.nombre, p.codigo_sku, p.stock 
+                FROM lista_precios_items li
+                JOIN productos p ON li.producto_id = p.id
+                WHERE li.lista_id = $1 AND li.producto_id = $2
+            `;
+            const precioResult = await client.query(precioQuery, [lista_precios_id, item.producto_id]);
+
+            if (precioResult.rows.length === 0) {
+                // Si un producto no tiene precio en la lista, la transacción falla. Esto es una medida de seguridad.
+                throw new Error(`El producto con ID ${item.producto_id} no tiene un precio definido en la lista seleccionada.`);
             }
 
-            const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
+            const { precio: precio_congelado, nombre, codigo_sku, stock } = precioResult.rows[0];
             const avisoFaltante = (stock === 'No');
             
             const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
-            await client.query(itemQuery, [nuevoPedidoId, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
+            await client.query(itemQuery, [nuevoPedidoId, item.producto_id, item.cantidad, precio_congelado, avisoFaltante, nombre, codigo_sku]);
             
-            backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku || 'N/A'}) @ $${precio_unitario}\n`;
+            backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku || 'N/A'}) @ $${precio_congelado}\n`;
         }
 
-        const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId}.`;
+        const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId} usando la lista de precios ID ${lista_precios_id}.`;
         await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]);
 
         await client.query('COMMIT');
 
+        // ... (código de backup sin cambios) ...
         try {
             await manageBackups();
             const backupFileName = `pedido_${nuevoPedidoId}_${Date.now()}.txt`;
@@ -100,7 +109,7 @@ const createPedido = async (req, res) => {
 
         res.status(201).json({ message: 'Pedido creado exitosamente', pedido_id: nuevoPedidoId });
 
-    } catch (error) { // <-- CORREGIDO
+    } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error al crear pedido (transacción revertida):', error);
         res.status(500).json({ message: error.message || 'Error interno del servidor al crear el pedido.' });
