@@ -29,17 +29,13 @@ const manageBackups = async () => {
 // --- CREAR un nuevo pedido (VERSIÓN MEJORADA) ---
 const createPedido = async (req, res) => {
     // --- CAMBIO 1: Añadir lista_precios_id al destructuring ---
-    const { cliente_id, items, notas_entrega, lista_precios_id } = req.body;
+    let { cliente_id, items, notas_entrega, lista_precios_id } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: 'El pedido debe contener al menos un item.' });
     }
-    // --- CAMBIO 2: Validar que se haya enviado la lista de precios ---
-    if (!lista_precios_id) {
-        return res.status(400).json({ message: 'No se especificó una lista de precios para el pedido.' });
-    }
-
+    
     const client = await pool.connect();
     
     let final_cliente_id = null;
@@ -47,6 +43,24 @@ const createPedido = async (req, res) => {
 
     try {
         await client.query('BEGIN');
+        
+        // --- INICIO DE LA MODIFICACIÓN: Lógica de fallback para lista de precios ---
+        const isLegacyRequest = !lista_precios_id;
+
+        if (isLegacyRequest) {
+            // Si no se provee una lista, intentamos buscar la 'General' o la primera disponible.
+            let fallbackListaResult = await client.query("SELECT id FROM listas_de_precios WHERE nombre = 'General' LIMIT 1");
+            if (fallbackListaResult.rows.length === 0) {
+                fallbackListaResult = await client.query("SELECT id FROM listas_de_precios ORDER BY id LIMIT 1");
+            }
+            if (fallbackListaResult.rows.length > 0) {
+                lista_precios_id = fallbackListaResult.rows[0].id;
+            } else {
+                // Si no hay ninguna lista de precios en el sistema, no podemos continuar.
+                throw new Error('No se especificó una lista de precios y no se encontró una por defecto.');
+            }
+        }
+        // --- FIN DE LA MODIFICACIÓN ---
 
         // --- 1. VALIDACIÓN INTELIGENTE (CLIENTE Y LISTA DE PRECIOS) ---
         const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
@@ -70,14 +84,25 @@ const createPedido = async (req, res) => {
         let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${lista_precios_id}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
 
         for (const item of items) {
-            // --- CAMBIO 4: Obtener el precio de la lista de precios, no de la tabla de productos ---
-            const precioQuery = `
-                SELECT li.precio, p.nombre, p.codigo_sku, p.stock 
-                FROM lista_precios_items li
-                JOIN productos p ON li.producto_id = p.id
-                WHERE li.lista_id = $1 AND li.producto_id = $2
-            `;
-            const precioResult = await client.query(precioQuery, [lista_precios_id, item.producto_id]);
+             // --- INICIO DE LA MODIFICACIÓN: Lógica de obtención de precio ---
+            let precioResult;
+            if (isLegacyRequest) {
+                // Para pedidos antiguos, usamos el precio_unitario del producto como fallback.
+                precioResult = await client.query(
+                    'SELECT precio_unitario as precio, nombre, codigo_sku, stock FROM productos WHERE id = $1',
+                    [item.producto_id]
+                );
+            } else {
+                // Para pedidos nuevos, usamos el precio de la lista de precios.
+                const precioQuery = `
+                    SELECT li.precio, p.nombre, p.codigo_sku, p.stock 
+                    FROM lista_precios_items li
+                    JOIN productos p ON li.producto_id = p.id
+                    WHERE li.lista_id = $1 AND li.producto_id = $2
+                `;
+                precioResult = await client.query(precioQuery, [lista_precios_id, item.producto_id]);
+            }
+            // --- FIN DE LA MODIFICACIÓN ---
 
             if (precioResult.rows.length === 0) {
                 // Si un producto no tiene precio en la lista, la transacción falla. Esto es una medida de seguridad.
