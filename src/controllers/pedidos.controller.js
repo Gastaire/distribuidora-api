@@ -46,6 +46,7 @@ const createPedido = async (req, res) => {
         
         // --- INICIO DE LA MODIFICACIÓN: Lógica de fallback para lista de precios ---
         const isLegacyRequest = !lista_precios_id;
+        let final_lista_precios_id = lista_precios_id || null;
 
         if (isLegacyRequest) {
             // Si no se provee una lista, intentamos buscar la 'General' o la primera disponible.
@@ -54,11 +55,9 @@ const createPedido = async (req, res) => {
                 fallbackListaResult = await client.query("SELECT id FROM listas_de_precios ORDER BY id LIMIT 1");
             }
             if (fallbackListaResult.rows.length > 0) {
-                lista_precios_id = fallbackListaResult.rows[0].id;
-            } else {
-                // Si no hay ninguna lista de precios en el sistema, no podemos continuar.
-                throw new Error('No se especificó una lista de precios y no se encontró una por defecto.');
+                final_lista_precios_id = fallbackListaResult.rows[0].id;
             }
+            // Si no se encuentra ninguna lista, final_lista_precios_id seguirá siendo null, y el pedido se creará sin una lista asociada.
         }
         // --- FIN DE LA MODIFICACIÓN ---
 
@@ -69,25 +68,27 @@ const createPedido = async (req, res) => {
         }
         final_cliente_id = cliente_id;
 
-        const listaResult = await client.query('SELECT id FROM listas_de_precios WHERE id = $1', [lista_precios_id]);
-        if (listaResult.rows.length === 0) {
-            throw new Error(`La lista de precios con id '${lista_precios_id}' no existe.`);
+        if (final_lista_precios_id) {
+            const listaResult = await client.query('SELECT id FROM listas_de_precios WHERE id = $1', [final_lista_precios_id]);
+            if (listaResult.rows.length === 0) {
+                throw new Error(`La lista de precios con id '${final_lista_precios_id}' no existe.`);
+            }
         }
 
         // --- 2. INSERCIÓN DEL PEDIDO CON LA LISTA DE PRECIOS ---
         // --- CAMBIO 3: Añadir lista_precios_id a la inserción del pedido ---
         const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega, lista_precios_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, fecha_creacion';
-        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega, lista_precios_id]);
+        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega, final_lista_precios_id]);
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
         
-        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${lista_precios_id}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
+        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${final_lista_precios_id || 'N/A'}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
 
         for (const item of items) {
              // --- INICIO DE LA MODIFICACIÓN: Lógica de obtención de precio ---
             let precioResult;
-            if (isLegacyRequest) {
-                // Para pedidos antiguos, usamos el precio_unitario del producto como fallback.
+            if (isLegacyRequest || !final_lista_precios_id) {
+                // Para pedidos antiguos o si no hay lista de precios, usamos el precio_unitario del producto.
                 precioResult = await client.query(
                     'SELECT precio_unitario as precio, nombre, codigo_sku, stock FROM productos WHERE id = $1',
                     [item.producto_id]
@@ -100,13 +101,13 @@ const createPedido = async (req, res) => {
                     JOIN productos p ON li.producto_id = p.id
                     WHERE li.lista_id = $1 AND li.producto_id = $2
                 `;
-                precioResult = await client.query(precioQuery, [lista_precios_id, item.producto_id]);
+                precioResult = await client.query(precioQuery, [final_lista_precios_id, item.producto_id]);
             }
             // --- FIN DE LA MODIFICACIÓN ---
 
             if (precioResult.rows.length === 0) {
-                // Si un producto no tiene precio en la lista, la transacción falla. Esto es una medida de seguridad.
-                throw new Error(`El producto con ID ${item.producto_id} no tiene un precio definido en la lista seleccionada.`);
+                // Si un producto no tiene precio, la transacción falla. Esto es una medida de seguridad.
+                throw new Error(`El producto con ID ${item.producto_id} no tiene un precio definido.`);
             }
 
             const { precio: precio_congelado, nombre, codigo_sku, stock } = precioResult.rows[0];
@@ -118,7 +119,7 @@ const createPedido = async (req, res) => {
             backupContent += `- (${item.cantidad}x) ${nombre} (SKU: ${codigo_sku || 'N/A'}) @ $${precio_congelado}\n`;
         }
 
-        const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId} usando la lista de precios ID ${lista_precios_id}.`;
+        const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId} usando la lista de precios ID ${final_lista_precios_id || 'ninguna (legacy)'}.`;
         await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]);
 
         await client.query('COMMIT');
