@@ -9,7 +9,7 @@ const MAX_BACKUPS = 30;
 const ensureBackupDir = async () => {
     try {
         await fs.access(BACKUP_DIR);
-    } catch (error) { // <-- CORREGIDO: Eliminada la flecha '=>'
+    } catch (error) {
         await fs.mkdir(BACKUP_DIR, { recursive: true });
     }
 };
@@ -28,7 +28,6 @@ const manageBackups = async () => {
 
 // --- CREAR un nuevo pedido (VERSIÓN MEJORADA) ---
 const createPedido = async (req, res) => {
-    // --- CAMBIO 1: Añadir lista_precios_id al destructuring ---
     let { cliente_id, items, notas_entrega, lista_precios_id } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
@@ -44,12 +43,10 @@ const createPedido = async (req, res) => {
     try {
         await client.query('BEGIN');
         
-        // --- INICIO DE LA MODIFICACIÓN: Lógica de fallback para lista de precios ---
         const isLegacyRequest = !lista_precios_id;
         let final_lista_precios_id = lista_precios_id || null;
 
         if (isLegacyRequest) {
-            // Si no se provee una lista, intentamos buscar la 'General' o la primera disponible.
             let fallbackListaResult = await client.query("SELECT id FROM listas_de_precios WHERE nombre = 'General' LIMIT 1");
             if (fallbackListaResult.rows.length === 0) {
                 fallbackListaResult = await client.query("SELECT id FROM listas_de_precios ORDER BY id LIMIT 1");
@@ -57,11 +54,8 @@ const createPedido = async (req, res) => {
             if (fallbackListaResult.rows.length > 0) {
                 final_lista_precios_id = fallbackListaResult.rows[0].id;
             }
-            // Si no se encuentra ninguna lista, final_lista_precios_id seguirá siendo null, y el pedido se creará sin una lista asociada.
         }
-        // --- FIN DE LA MODIFICACIÓN ---
 
-        // --- 1. VALIDACIÓN INTELIGENTE (CLIENTE Y LISTA DE PRECIOS) ---
         const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
         if (clienteResult.rows.length === 0) {
             throw new Error(`El cliente con id '${cliente_id}' no existe en el servidor.`);
@@ -75,26 +69,21 @@ const createPedido = async (req, res) => {
             }
         }
 
-        // --- 2. INSERCIÓN DEL PEDIDO CON LA LISTA DE PRECIOS ---
-        // --- CAMBIO 3: Añadir lista_precios_id a la inserción del pedido ---
         const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega, lista_precios_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, fecha_creacion';
         const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega, final_lista_precios_id]);
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
         
-        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${final_lista_precios_id || 'N/A'}\nNotas: ${final_notas_entrega}\n\nItems:\n`;
+        let backupContent = `Pedido ID: ${nuevoPedidoId}\nFecha: ${new Date(fechaCreacion).toLocaleString()}\nCliente ID: ${final_cliente_id}\nLista de Precios ID: ${final_lista_precios_id || 'N/A'}\n[...]`;
 
         for (const item of items) {
-             // --- INICIO DE LA MODIFICACIÓN: Lógica de obtención de precio ---
             let precioResult;
             if (isLegacyRequest || !final_lista_precios_id) {
-                // Para pedidos antiguos o si no hay lista de precios, usamos el precio_unitario del producto.
                 precioResult = await client.query(
                     'SELECT precio_unitario as precio, nombre, codigo_sku, stock FROM productos WHERE id = $1',
                     [item.producto_id]
                 );
             } else {
-                // Para pedidos nuevos, usamos el precio de la lista de precios.
                 const precioQuery = `
                     SELECT li.precio, p.nombre, p.codigo_sku, p.stock 
                     FROM lista_precios_items li
@@ -103,10 +92,8 @@ const createPedido = async (req, res) => {
                 `;
                 precioResult = await client.query(precioQuery, [final_lista_precios_id, item.producto_id]);
             }
-            // --- FIN DE LA MODIFICACIÓN ---
 
             if (precioResult.rows.length === 0) {
-                // Si un producto no tiene precio, la transacción falla. Esto es una medida de seguridad.
                 throw new Error(`El producto con ID ${item.producto_id} no tiene un precio definido.`);
             }
 
@@ -124,7 +111,6 @@ const createPedido = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // ... (código de backup sin cambios) ...
         try {
             await manageBackups();
             const backupFileName = `pedido_${nuevoPedidoId}_${Date.now()}.txt`;
@@ -206,7 +192,7 @@ const updatePedido = async (req, res) => {
         await client.query('COMMIT');
         res.status(200).json({ message: 'Pedido actualizado exitosamente.' });
 
-    } catch (error) { // <-- CORREGIDO
+    } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error al actualizar el pedido:', error);
         res.status(500).json({ message: 'Error interno del servidor al actualizar el pedido.' });
@@ -215,8 +201,6 @@ const updatePedido = async (req, res) => {
     }
 };
 
-// --- El resto del archivo sin cambios ---
-// ... (getPedidoById, getPedidos, etc.)
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
     const { items } = req.body;
@@ -232,7 +216,6 @@ const updatePedidoItems = async (req, res) => {
         let logDetail = `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`;
         const newItemsMap = new Map(items.map(i => [i.producto_id, i.cantidad]));
 
-        // Detectar cambios, adiciones y eliminaciones
         const todosLosProductosIds = new Set([...oldItemsMap.keys(), ...newItemsMap.keys()]);
 
         for (const producto_id of todosLosProductosIds) {
@@ -245,10 +228,8 @@ const updatePedidoItems = async (req, res) => {
             }
         }
         
-        // 1. Borrar items antiguos
         await client.query('DELETE FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
 
-        // 2. Insertar items nuevos
         for (const item of items) {
              const productoResult = await client.query('SELECT nombre, codigo_sku, precio_unitario FROM productos WHERE id = $1', [item.producto_id]);
              if (productoResult.rows.length === 0) throw new Error(`Producto con ID ${item.producto_id} no encontrado.`);
@@ -258,7 +239,6 @@ const updatePedidoItems = async (req, res) => {
              await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, nombre, codigo_sku]);
         }
         
-        // 3. Guardar el log de actividad si hubo cambios
         if (logDetail.length > `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`.length) {
              await client.query(
                 'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
@@ -277,9 +257,6 @@ const updatePedidoItems = async (req, res) => {
         client.release();
     }
 };
-
-// El resto de funciones (getPedidos, getPedidoById, updatePedidoEstado) no necesitan cambios drásticos.
-// Pero nos aseguramos que getPedidoById devuelva las nuevas columnas.
 
 const getPedidoById = async (req, res) => {
     const { id } = req.params;
@@ -313,7 +290,6 @@ const getPedidoById = async (req, res) => {
     }
 };
 
-// GET PEDIDOS (Sin cambios)
 const getPedidos = async (req, res) => {
     const { rol, id: usuario_id } = req.user;
     let query = `
@@ -342,7 +318,6 @@ const getPedidos = async (req, res) => {
     }
 };
 
-// NUEVA FUNCIÓN para obtener el historial de un vendedor
 const getMisPedidos = async (req, res) => {
     const { id: usuario_id } = req.user;
     try {
@@ -361,11 +336,8 @@ const getMisPedidos = async (req, res) => {
     }
 };
 
-
-// Copia esta función completa dentro de pedidos.controller.js
-
 const combinarPedidos = async (req, res) => {
-    const { pedidoIds } = req.body; // Recibimos un array de IDs desde el frontend
+    const { pedidoIds } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
     if (!pedidoIds || !Array.isArray(pedidoIds) || pedidoIds.length < 2) {
@@ -375,9 +347,8 @@ const combinarPedidos = async (req, res) => {
     const client = await pool.connect();
 
     try {
-        await client.query('BEGIN'); // <-- Iniciamos la transacción
+        await client.query('BEGIN');
 
-        // 1. Validar que todos los pedidos existan y pertenezcan al mismo cliente
         const pedidosOriginalesResult = await client.query(
             "SELECT id, cliente_id, estado FROM pedidos WHERE id = ANY($1::int[])", [pedidoIds]
         );
@@ -391,7 +362,6 @@ const combinarPedidos = async (req, res) => {
             throw new Error('No se pueden combinar pedidos de diferentes clientes.');
         }
 
-        // 2. Obtener y consolidar todos los items de los pedidos a combinar
         const itemsResult = await client.query("SELECT * FROM pedido_items WHERE pedido_id = ANY($1::int[])", [pedidoIds]);
         const itemsConsolidados = new Map();
 
@@ -403,7 +373,6 @@ const combinarPedidos = async (req, res) => {
             }
         }
 
-        // 3. Crear el nuevo pedido "maestro"
         const notasMaestro = `Pedido combinado a partir de los IDs: ${pedidoIds.join(', ')}.`;
         const pedidoMaestroResult = await client.query(
             'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega) VALUES ($1, $2, $3, $4) RETURNING id',
@@ -411,7 +380,6 @@ const combinarPedidos = async (req, res) => {
         );
         const nuevoPedidoId = pedidoMaestroResult.rows[0].id;
 
-        // 4. Insertar los items consolidados en el nuevo pedido maestro
         for (const item of itemsConsolidados.values()) {
             await client.query(
                 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -419,33 +387,31 @@ const combinarPedidos = async (req, res) => {
             );
         }
 
-        // 5. Actualizar los pedidos originales para marcarlos como combinados
         await client.query(
             "UPDATE pedidos SET estado = 'combinado', pedido_maestro_id = $1 WHERE id = ANY($2::int[])",
             [nuevoPedidoId, pedidoIds]
         );
 
-        // 6. Registrar la acción en la tabla de actividad
         const logDetail = `El usuario ${nombre_usuario} combinó los pedidos [${pedidoIds.join(', ')}] en el nuevo pedido maestro #${nuevoPedidoId}.`;
         await client.query(
             'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
             [usuario_id, nombre_usuario, 'COMBINAR_PEDIDOS', logDetail]
         );
 
-        await client.query('COMMIT'); // <-- Confirmamos todos los cambios
+        await client.query('COMMIT');
 
         res.status(201).json({ message: 'Pedidos combinados con éxito.', nuevoPedidoId });
 
     } catch (error) {
-        await client.query('ROLLBACK'); // <-- Revertimos todo si algo falla
+        await client.query('ROLLBACK');
         console.error('Error al combinar pedidos:', error);
         res.status(500).json({ message: error.message || 'Error interno del servidor al combinar pedidos.' });
     } finally {
-        client.release(); // <-- Liberamos la conexión
+        client.release();
     }
 };
 
-// UPDATE ESTADO (Sin cambios)
+// --- INICIO DE LA MODIFICACIÓN: Lógica de descuento de stock ---
 const updatePedidoEstado = async (req, res) => {
     const { id } = req.params;
     const { estado } = req.body;
@@ -467,6 +433,22 @@ const updatePedidoEstado = async (req, res) => {
         );
         if (rows.length === 0) throw new Error('Pedido no encontrado');
         
+        // Si el nuevo estado es 'entregado', procedemos a descontar el stock.
+        if (estado === 'entregado') {
+            const itemsResult = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [id]);
+            const pedidoItems = itemsResult.rows;
+
+            for (const item of pedidoItems) {
+                // Para cada item, descontamos el stock del producto correspondiente si controla stock.
+                // Usamos FOR UPDATE para bloquear la fila del producto y evitar condiciones de carrera.
+                await client.query(`
+                    UPDATE productos
+                    SET stock_cantidad = stock_cantidad - $1
+                    WHERE id = $2 AND controla_stock = true
+                `, [item.cantidad, item.producto_id]);
+            }
+        }
+        
         const logDetail = `El usuario ${nombre_usuario} cambió el estado del pedido #${id} a '${estado}'.`;
         await client.query(
             'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
@@ -483,6 +465,7 @@ const updatePedidoEstado = async (req, res) => {
         client.release();
     }
 };
+// --- FIN DE LA MODIFICACIÓN ---
 
 const archivePedido = async (req, res) => {
     const { id } = req.params;
@@ -492,7 +475,6 @@ const archivePedido = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // Actualizamos el estado del pedido a 'archivado'
         const result = await client.query(
             "UPDATE pedidos SET estado = 'archivado' WHERE id = $1 RETURNING id",
             [id]
@@ -502,7 +484,6 @@ const archivePedido = async (req, res) => {
             return res.status(404).json({ message: 'Pedido no encontrado' });
         }
 
-        // Creamos el registro en la tabla de actividad
         const logDetail = `El usuario ${nombre_usuario} archivó el pedido #${id}.`;
         await client.query(
             'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
@@ -528,7 +509,6 @@ const cleanupArchivedPedidos = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // Obtenemos los IDs de todos los pedidos archivados
         const archivedPedidos = await client.query("SELECT id FROM pedidos WHERE estado = 'archivado'");
         
         if (archivedPedidos.rows.length === 0) {
@@ -537,13 +517,10 @@ const cleanupArchivedPedidos = async (req, res) => {
         
         const archivedIds = archivedPedidos.rows.map(p => p.id);
 
-        // Eliminamos primero los items de esos pedidos (por la clave foránea)
         await client.query('DELETE FROM pedido_items WHERE pedido_id = ANY($1::int[])', [archivedIds]);
         
-        // Ahora eliminamos los pedidos
         const deleteResult = await client.query('DELETE FROM pedidos WHERE id = ANY($1::int[])', [archivedIds]);
 
-        // Creamos el registro de la limpieza
         const logDetail = `El usuario ${nombre_usuario} eliminó permanentemente ${deleteResult.rowCount} pedido(s) archivado(s).`;
         await client.query(
             'INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)',
@@ -567,7 +544,6 @@ const unarchivePedido = async (req, res) => {
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
     
     try {
-        // Cambia el estado de 'archivado' de vuelta a 'pendiente'
         const { rows } = await pool.query(
             "UPDATE pedidos SET estado = 'pendiente' WHERE id = $1 AND estado = 'archivado' RETURNING *",
             [id]
@@ -629,7 +605,7 @@ const updatePedidoNotas = async (req, res) => {
 module.exports = {
     createPedido,
     getPedidos,
-    getMisPedidos, // <-- NUEVA FUNCIÓN EXPORTADA
+    getMisPedidos,
     getPedidoById,
     updatePedidoItems,
     updatePedidoEstado,
