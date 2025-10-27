@@ -201,6 +201,7 @@ const updatePedido = async (req, res) => {
     }
 };
 
+// --- INICIO DE LA MODIFICACIÓN: Lógica de registro de faltantes ---
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
     const { items } = req.body;
@@ -211,7 +212,7 @@ const updatePedidoItems = async (req, res) => {
         await client.query('BEGIN');
 
         const oldItemsResult = await client.query('SELECT * FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
-        const oldItemsMap = new Map(oldItemsResult.rows.map(i => [i.producto_id, i.cantidad]));
+        const oldItemsMap = new Map(oldItemsResult.rows.map(i => [i.producto_id, { cantidad: i.cantidad, nombre: i.nombre_producto }]));
         
         let logDetail = `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`;
         const newItemsMap = new Map(items.map(i => [i.producto_id, i.cantidad]));
@@ -219,12 +220,23 @@ const updatePedidoItems = async (req, res) => {
         const todosLosProductosIds = new Set([...oldItemsMap.keys(), ...newItemsMap.keys()]);
 
         for (const producto_id of todosLosProductosIds) {
-            const oldQty = oldItemsMap.get(producto_id) || 0;
-            const newQty = newItemsMap.get(producto_id) || 0;
+            const oldItemData = oldItemsMap.get(producto_id);
+            const oldQty = oldItemData ? parseFloat(oldItemData.cantidad) : 0;
+            const newQty = newItemsMap.get(producto_id) ? parseFloat(newItemsMap.get(producto_id)) : 0;
+
             if (oldQty !== newQty) {
-                const productInfo = await client.query('SELECT nombre FROM productos WHERE id = $1', [producto_id]);
-                const productName = productInfo.rows.length > 0 ? productInfo.rows[0].nombre : `Producto ID ${producto_id}`;
+                const productName = oldItemData ? oldItemData.nombre : (await client.query('SELECT nombre FROM productos WHERE id = $1', [producto_id])).rows[0]?.nombre || `Producto ID ${producto_id}`;
                 logDetail += `- ${productName}: cantidad cambió de ${oldQty} a ${newQty}.\n`;
+
+                // --- LÓGICA PARA REGISTRAR FALTANTES ---
+                // Si la cantidad original era mayor a cero y la nueva es cero, lo registramos.
+                if (oldQty > 0 && newQty === 0) {
+                    await client.query(
+                        `INSERT INTO registro_faltantes (pedido_id, producto_id, nombre_producto, cantidad_original, usuario_modifico_id, nombre_usuario_modifico)
+                         VALUES ($1, $2, $3, $4, $5, $6)`,
+                        [pedido_id, producto_id, productName, oldQty, usuario_id, nombre_usuario]
+                    );
+                }
             }
         }
         
@@ -257,6 +269,7 @@ const updatePedidoItems = async (req, res) => {
         client.release();
     }
 };
+// --- FIN DE LA MODIFICACIÓN ---
 
 const getPedidoById = async (req, res) => {
     const { id } = req.params;
@@ -411,7 +424,6 @@ const combinarPedidos = async (req, res) => {
     }
 };
 
-// --- INICIO DE LA MODIFICACIÓN: Lógica de descuento de stock ---
 const updatePedidoEstado = async (req, res) => {
     const { id } = req.params;
     const { estado } = req.body;
@@ -433,14 +445,11 @@ const updatePedidoEstado = async (req, res) => {
         );
         if (rows.length === 0) throw new Error('Pedido no encontrado');
         
-        // Si el nuevo estado es 'entregado', procedemos a descontar el stock.
         if (estado === 'entregado') {
             const itemsResult = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [id]);
             const pedidoItems = itemsResult.rows;
 
             for (const item of pedidoItems) {
-                // Para cada item, descontamos el stock del producto correspondiente si controla stock.
-                // Usamos FOR UPDATE para bloquear la fila del producto y evitar condiciones de carrera.
                 await client.query(`
                     UPDATE productos
                     SET stock_cantidad = stock_cantidad - $1
@@ -465,7 +474,6 @@ const updatePedidoEstado = async (req, res) => {
         client.release();
     }
 };
-// --- FIN DE LA MODIFICACIÓN ---
 
 const archivePedido = async (req, res) => {
     const { id } = req.params;
