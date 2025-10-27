@@ -16,6 +16,9 @@ const borradoresRoutes = require('./src/routes/borradores.routes');
 const kpiRoutes = require('./src/routes/kpi.routes.js');
 const diagnosticsRoutes = require('./src/routes/diagnostics.routes');
 const listasPreciosRoutes = require('./src/routes/listas-precios.routes');
+// --- INICIO DE LA MODIFICACIÓN: Añadir nueva ruta de reportes ---
+const reportesRoutes = require('./src/routes/reportes.routes.js');
+// --- FIN DE LA MODIFICACIÓN ---
 
 
 const app = express();
@@ -47,6 +50,9 @@ app.use('/api', borradoresRoutes);
 app.use('/api', kpiRoutes);
 app.use('/api', diagnosticsRoutes);
 app.use('/api', listasPreciosRoutes);
+// --- INICIO DE LA MODIFICACIÓN: Usar la nueva ruta ---
+app.use('/api', reportesRoutes);
+// --- FIN DE LA MODIFICACIÓN ---
 
 
 // Iniciar el servidor
