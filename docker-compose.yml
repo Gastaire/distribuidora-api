@@ -14,6 +14,11 @@ services:
       - DB_PORT=5432
       - API_PORT=4000
       - JWT_SECRET=${JWT_SECRET}
+      # --- INICIO DE LA MODIFICACIÓN: Añadir variables para WhatsApp ---
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - WHATSAPP_RECIPIENT_NUMBER=${WHATSAPP_RECIPIENT_NUMBER}
+      # --- FIN DE LA MODIFICACIÓN ---
     depends_on:
       # AHORA DEPENDE DEL ESTADO DE SALUD DEL SERVICIO
       postgres-db:
