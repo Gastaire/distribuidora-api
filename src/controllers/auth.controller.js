@@ -54,7 +54,7 @@ const login = async (req, res) => {
       },
     };
 
-    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '365d' });
 
     res.json({
       message: 'Inicio de sesión exitoso',
