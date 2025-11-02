@@ -201,7 +201,6 @@ const updatePedido = async (req, res) => {
     }
 };
 
-// --- INICIO DE LA MODIFICACIÓN: Lógica de registro de faltantes ---
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
     const { items } = req.body;
@@ -228,8 +227,6 @@ const updatePedidoItems = async (req, res) => {
                 const productName = oldItemData ? oldItemData.nombre : (await client.query('SELECT nombre FROM productos WHERE id = $1', [producto_id])).rows[0]?.nombre || `Producto ID ${producto_id}`;
                 logDetail += `- ${productName}: cantidad cambió de ${oldQty} a ${newQty}.\n`;
 
-                // --- LÓGICA PARA REGISTRAR FALTANTES ---
-                // Si la cantidad original era mayor a cero y la nueva es cero, lo registramos.
                 if (oldQty > 0 && newQty === 0) {
                     await client.query(
                         `INSERT INTO registro_faltantes (pedido_id, producto_id, nombre_producto, cantidad_original, usuario_modifico_id, nombre_usuario_modifico)
@@ -269,7 +266,6 @@ const updatePedidoItems = async (req, res) => {
         client.release();
     }
 };
-// --- FIN DE LA MODIFICACIÓN ---
 
 const getPedidoById = async (req, res) => {
     const { id } = req.params;
@@ -348,6 +344,36 @@ const getMisPedidos = async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor' });
     }
 };
+
+// --- INICIO DE LA MODIFICACIÓN: Nueva función para el historial ---
+const getMisPedidosHistoricos = async (req, res) => {
+    const { id: usuario_id } = req.user;
+    try {
+        const query = `
+            SELECT 
+                p.id, p.fecha_creacion, p.estado, p.cliente_id, c.nombre_comercio, u.nombre as nombre_vendedor,
+                (SELECT json_agg(json_build_object(
+                    'producto_id', pi.producto_id,
+                    'cantidad', pi.cantidad,
+                    'precio_congelado', pi.precio_congelado,
+                    'nombre_producto', pi.nombre_producto,
+                    'codigo_sku', pi.codigo_sku
+                )) FROM pedido_items pi WHERE pi.pedido_id = p.id) as items
+            FROM pedidos p
+            LEFT JOIN clientes c ON p.cliente_id = c.id
+            LEFT JOIN usuarios u ON p.usuario_id = u.id
+            WHERE p.usuario_id = $1 AND p.fecha_creacion < NOW() - INTERVAL '72 hours'
+            ORDER BY p.fecha_creacion DESC
+            LIMIT 100; -- Limitamos para no sobrecargar
+        `;
+        const { rows } = await pool.query(query, [usuario_id]);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error al obtener el historial de pedidos del servidor:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+};
+// --- FIN DE LA MODIFICACIÓN ---
 
 const combinarPedidos = async (req, res) => {
     const { pedidoIds } = req.body;
@@ -614,6 +640,7 @@ module.exports = {
     createPedido,
     getPedidos,
     getMisPedidos,
+    getMisPedidosHistoricos, // <-- Exportamos la nueva función
     getPedidoById,
     updatePedidoItems,
     updatePedidoEstado,
