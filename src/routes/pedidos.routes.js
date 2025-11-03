@@ -3,7 +3,8 @@ const {
     createPedido,
     getPedidos,
     getMisPedidos,
-    getMisPedidosHistoricos, // <-- IMPORTAMOS LA NUEVA FUNCIÓN
+    getMisPedidosHistoricos,
+    getPedidosStatus, // <-- IMPORTAMOS LA NUEVA FUNCIÓN
     getPedidoById,
     updatePedidoEstado,
     updatePedidoItems,
@@ -24,12 +25,13 @@ const router = Router();
 router.post('/pedidos', protect, authorize('vendedor', 'admin'), createPedido);
 router.get('/pedidos', protect, getPedidos);
 
-// Ruta para que un vendedor obtenga su propio historial de pedidos reciente.
 router.get('/pedidos/mis-pedidos', protect, authorize('vendedor', 'admin'), getMisPedidos);
 
-// --- INICIO DE NUEVA RUTA ---
-// Ruta para que un vendedor obtenga su historial de pedidos más antiguos desde el servidor.
 router.get('/pedidos/mis-pedidos-historicos', protect, authorize('vendedor', 'admin'), getMisPedidosHistoricos);
+
+// --- INICIO DE NUEVA RUTA ---
+// Ruta para que la app de ventas consulte el estado de varios pedidos a la vez.
+router.get('/pedidos/status', protect, authorize('vendedor', 'admin'), getPedidosStatus);
 // --- FIN DE NUEVA RUTA ---
 
 router.get('/pedidos/:id', protect, getPedidoById);
