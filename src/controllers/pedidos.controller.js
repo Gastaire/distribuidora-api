@@ -345,7 +345,6 @@ const getMisPedidos = async (req, res) => {
     }
 };
 
-// --- INICIO DE LA MODIFICACIÓN: Nueva función para el historial ---
 const getMisPedidosHistoricos = async (req, res) => {
     const { id: usuario_id } = req.user;
     try {
@@ -373,7 +372,40 @@ const getMisPedidosHistoricos = async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor' });
     }
 };
-// --- FIN DE LA MODIFICACIÓN ---
+
+// --- INICIO DE NUEVA FUNCIÓN ---
+/**
+ * @description Obtiene el estado actual de una lista de pedidos.
+ * Diseñado para ser ligero y rápido, para la sincronización de la app de ventas.
+ */
+const getPedidosStatus = async (req, res, next) => {
+    const { ids } = req.query; // Esperamos una lista de IDs separados por coma, ej: ?ids=1,2,3
+    const { id: usuario_id } = req.user;
+
+    if (!ids) {
+        return res.status(200).json([]); // No hay IDs para consultar, devolvemos un array vacío.
+    }
+
+    const idArray = ids.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+
+    if (idArray.length === 0) {
+        return res.status(200).json([]);
+    }
+
+    try {
+        const query = `
+            SELECT id, estado 
+            FROM pedidos 
+            WHERE id = ANY($1::int[]) AND usuario_id = $2
+        `;
+        const { rows } = await pool.query(query, [idArray, usuario_id]);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error al obtener los estados de los pedidos:', error);
+        next(error);
+    }
+};
+// --- FIN DE NUEVA FUNCIÓN ---
 
 const combinarPedidos = async (req, res) => {
     const { pedidoIds } = req.body;
@@ -640,7 +672,8 @@ module.exports = {
     createPedido,
     getPedidos,
     getMisPedidos,
-    getMisPedidosHistoricos, // <-- Exportamos la nueva función
+    getMisPedidosHistoricos,
+    getPedidosStatus, // <-- Exportamos la nueva función
     getPedidoById,
     updatePedidoItems,
     updatePedidoEstado,
