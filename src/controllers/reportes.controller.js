@@ -61,6 +61,10 @@ const getReporteDiarioPedidos = async (req, res, next) => {
     const hasta = endDate   || new Date().toISOString().slice(0, 10);
 
     const { conditions, params, nextIdx } = buildDateFilter(desde, hasta, 'p.fecha_creacion', 1);
+    
+    // Filtro adicional para excluir pedidos archivados
+    conditions.push(`p.estado != 'archivado'`);
+    
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     try {
