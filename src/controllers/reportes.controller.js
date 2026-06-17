@@ -374,11 +374,15 @@ const getReporteClientesInactivos = async (req, res, next) => {
 // GET /api/reportes/productos-mas-pedidos
 // ─────────────────────────────────────────────────────────────────────────────
 const getReporteProductosMasPedidos = async (req, res, next) => {
-    const { startDate, endDate, orderBy = 'cantidad' } = req.query;
+    const { startDate, endDate, orderBy = 'cantidad', categoria } = req.query;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
     const { conditions, params } = buildDateFilter(startDate, endDate, 'p.fecha_creacion', 1);
-    const baseCondition = `p.estado NOT IN ${ESTADOS_EXCLUIDOS}`;
+    let baseCondition = `p.estado NOT IN ${ESTADOS_EXCLUIDOS}`;
+    if (categoria) {
+        params.push(categoria);
+        baseCondition += ` AND pr.categoria = $${params.length}`;
+    }
 
     const whereClause = conditions.length
         ? `WHERE ${baseCondition} AND ${conditions.join(' AND ')}`
