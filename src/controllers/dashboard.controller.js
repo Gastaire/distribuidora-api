@@ -111,7 +111,7 @@ const getDashboardStats = async (req, res) => {
                     COALESCE(SUM(rf.cantidad_original * p_prod.precio_unitario), 0) AS "lostRevenue",
                     COALESCE(SUM(rf.cantidad_original), 0) AS "lostUnits"
                 FROM registro_faltantes rf
-                JOIN productos p_prod ON rf.nombre_producto = p_prod.nombre
+                LEFT JOIN productos p_prod ON rf.nombre_producto = p_prod.nombre
                 JOIN pedidos p ON rf.pedido_id = p.id
                 WHERE 1=1 ${dateFilter}`;
 
@@ -122,26 +122,34 @@ const getDashboardStats = async (req, res) => {
 
             const totalCustomersQuery = `SELECT COUNT(*) AS "totalCustomers" FROM clientes`;
 
-            const [total, period, products, topFaltantes, evolution, lost, activeCust, totalCust] = await Promise.all([
+            let evolutionData = { fechas: [], series: [] };
+            let evolutionRows = [];
+            try {
+                const evolutionResult = await client.query(evolutionQuery, dateParams);
+                evolutionRows = evolutionResult.rows;
+            } catch (evoErr) {
+                console.error('Error en query de evolución (no crítico):', evoErr.message);
+            }
+
+            const [total, period, products, topFaltantes, lost, activeCust, totalCust] = await Promise.all([
                 client.query(totalQuery, dateParams),
                 client.query(salesByPeriodQuery, dateParams),
                 client.query(topProductsQuery, [...dateParams, topProductsLimit]),
                 client.query(topFaltantesQuery, faltParams),
-                client.query(evolutionQuery, dateParams),
                 client.query(lostSalesQuery, dateParams),
                 client.query(customersQuery, dateParams),
                 client.query(totalCustomersQuery),
             ]);
 
             // Transformar datos de evolución en estructura { fechas, series }
-            const allFechas = [...new Set(evolution.rows.map(r => r.fecha))].sort();
-            const allProductos = [...new Set(evolution.rows.map(r => r.producto))];
+            const allFechas = [...new Set(evolutionRows.map(r => r.fecha))].sort();
+            const allProductos = [...new Set(evolutionRows.map(r => r.producto))];
             const seriesMap = {};
-            evolution.rows.forEach(r => {
+            evolutionRows.forEach(r => {
                 if (!seriesMap[r.producto]) seriesMap[r.producto] = {};
                 seriesMap[r.producto][r.fecha] = parseFloat(r.cantidad);
             });
-            const evolutionData = {
+            evolutionData = {
                 fechas: allFechas,
                 series: allProductos.map(prod => ({
                     producto: prod,
