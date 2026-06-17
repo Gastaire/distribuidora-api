@@ -31,7 +31,7 @@ const getDashboardStats = async (req, res) => {
 
             const topProductsQuery = `SELECT pi.nombre_producto as nombre, SUM(pi.cantidad) AS "totalQuantity" FROM pedido_items pi JOIN pedidos p ON pi.pedido_id = p.id WHERE p.estado NOT IN ('cancelado', 'archivado') ${dateFilter} GROUP BY pi.nombre_producto ORDER BY "totalQuantity" DESC LIMIT $${paramCount}`;
             
-            const lostSalesQuery = `SELECT COALESCE(SUM(rf.cantidad_original * p_prod.precio_base), 0) AS "lostRevenue", COALESCE(SUM(rf.cantidad_original), 0) AS "lostUnits" FROM registro_faltantes rf JOIN productos p_prod ON rf.nombre_producto = p_prod.nombre JOIN pedidos p ON rf.pedido_id = p.id WHERE 1=1 ${dateFilter}`;
+            const lostSalesQuery = `SELECT COALESCE(SUM(rf.cantidad_original * p_prod.precio_unitario), 0) AS "lostRevenue", COALESCE(SUM(rf.cantidad_original), 0) AS "lostUnits" FROM registro_faltantes rf JOIN productos p_prod ON rf.nombre_producto = p_prod.nombre JOIN pedidos p ON rf.pedido_id = p.id WHERE 1=1 ${dateFilter}`;
             
             const customersQuery = `SELECT COUNT(DISTINCT cliente_id) as "activeCustomers" FROM pedidos p WHERE p.estado NOT IN ('cancelado', 'archivado') ${dateFilter}`;
             
