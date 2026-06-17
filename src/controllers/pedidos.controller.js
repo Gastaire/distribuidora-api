@@ -5,6 +5,8 @@ const path = require('path');
 const BACKUP_DIR = path.join(__dirname, '..', '..', 'pedido_backups');
 const MAX_BACKUPS = 30;
 
+const fsSync = require('fs');
+
 // --- Función Auxiliar para Backups ---
 const ensureBackupDir = async () => {
     try {
@@ -19,8 +21,8 @@ const manageBackups = async () => {
     const files = await fs.readdir(BACKUP_DIR);
     if (files.length >= MAX_BACKUPS) {
         const sortedFiles = files.sort((a, b) => {
-            return fs.statSync(path.join(BACKUP_DIR, a)).mtime.getTime() - 
-                   fs.statSync(path.join(BACKUP_DIR, b)).mtime.getTime();
+            return fsSync.statSync(path.join(BACKUP_DIR, a)).mtime.getTime() - 
+                   fsSync.statSync(path.join(BACKUP_DIR, b)).mtime.getTime();
         });
         await fs.unlink(path.join(BACKUP_DIR, sortedFiles[0]));
     }
