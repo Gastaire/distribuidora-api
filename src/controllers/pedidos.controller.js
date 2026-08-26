@@ -489,7 +489,7 @@ const updatePedidoEstado = async (req, res) => {
     const { estado } = req.body;
     const { rol, id: usuario_id, nombre: nombre_usuario } = req.user;
 
-    const estadosPermitidosDeposito = ['en_preparacion', 'listo_para_entrega', 'entregado', 'visto'];
+    const estadosPermitidosDeposito = ['en_preparacion', 'facturado', 'listo_para_entrega', 'entregado', 'visto'];
 
     if (rol === 'deposito' && !estadosPermitidosDeposito.includes(estado)) {
         return res.status(403).json({ message: 'No tienes permiso para cambiar a este estado.' });
@@ -504,6 +504,10 @@ const updatePedidoEstado = async (req, res) => {
             [estado, id]
         );
         if (rows.length === 0) throw new Error('Pedido no encontrado');
+
+        if (estado === 'facturado') {
+            await client.query('UPDATE pedidos SET fecha_facturado = NOW() WHERE id = $1', [id]);
+        }
         
         if (estado === 'entregado') {
             const itemsResult = await client.query('SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1', [id]);
@@ -662,11 +666,42 @@ const updatePedidoNotas = async (req, res) => {
         await client.query('COMMIT');
         res.status(200).json(rows[0]);
     } catch (error) {
-        await client.query('ROLLBACK');
+await client.query('ROLLBACK');
         console.error(`Error al actualizar notas del pedido ${id}:`, error);
         res.status(500).json({ message: 'Error interno del servidor' });
     } finally {
         client.release();
+    }
+};
+
+const getHojaRuta = async (req, res, next) => {
+    try {
+        const query = `
+            SELECT 
+                p.id, 
+                p.fecha_creacion, 
+                p.fecha_facturado,
+                p.cliente_id, 
+                c.nombre_comercio, 
+                c.direccion, 
+                u.nombre as nombre_vendedor,
+                COALESCE((
+                    SELECT SUM(pi.cantidad * pi.precio_congelado) 
+                    FROM pedido_items pi 
+                    WHERE pi.pedido_id = p.id
+                ), 0) as monto_total
+            FROM pedidos p
+            JOIN clientes c ON p.cliente_id = c.id
+            LEFT JOIN usuarios u ON p.usuario_id = u.id
+            WHERE p.estado = 'facturado' 
+              AND p.fecha_facturado >= NOW() - INTERVAL '6 hours'
+            ORDER BY c.direccion, p.fecha_facturado ASC
+        `;
+        const { rows } = await pool.query(query);
+        res.status(200).json(rows);
+    } catch (error) {
+        console.error('Error al obtener la hoja de ruta:', error);
+        next(error);
     }
 };
 
@@ -675,7 +710,7 @@ module.exports = {
     getPedidos,
     getMisPedidos,
     getMisPedidosHistoricos,
-    getPedidosStatus, // <-- Exportamos la nueva función
+    getPedidosStatus,
     getPedidoById,
     updatePedidoItems,
     updatePedidoEstado,
@@ -684,5 +719,6 @@ module.exports = {
     updatePedido,
     updatePedidoNotas,
     unarchivePedido,
-    combinarPedidos
+    combinarPedidos,
+    getHojaRuta
 };

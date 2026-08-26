@@ -13,7 +13,8 @@ const {
     archivePedido,
     cleanupArchivedPedidos,
     unarchivePedido,
-    combinarPedidos
+    combinarPedidos,
+    getHojaRuta
 } = require('../controllers/pedidos.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
@@ -33,6 +34,8 @@ router.get('/pedidos/mis-pedidos-historicos', protect, authorize('vendedor', 'ad
 // Ruta para que la app de ventas consulte el estado de varios pedidos a la vez.
 router.get('/pedidos/status', protect, authorize('vendedor', 'admin'), getPedidosStatus);
 // --- FIN DE NUEVA RUTA ---
+
+router.get('/pedidos/hoja-ruta', protect, authorize('admin', 'deposito'), getHojaRuta);
 
 router.get('/pedidos/:id', protect, getPedidoById);
 router.put('/pedidos/:id/estado', protect, authorize('admin', 'deposito'), updatePedidoEstado);
