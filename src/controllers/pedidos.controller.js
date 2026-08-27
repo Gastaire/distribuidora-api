@@ -684,6 +684,9 @@ const getHojaRuta = async (req, res, next) => {
                 p.cliente_id, 
                 c.nombre_comercio, 
                 c.direccion, 
+                c.localidad,
+                c.horario_atencion,
+                c.horario_recepcion,
                 u.nombre as nombre_vendedor,
                 COALESCE((
                     SELECT SUM(pi.cantidad * pi.precio_congelado) 
@@ -695,7 +698,7 @@ const getHojaRuta = async (req, res, next) => {
             LEFT JOIN usuarios u ON p.usuario_id = u.id
             WHERE p.estado = 'facturado' 
               AND p.fecha_facturado >= NOW() - INTERVAL '6 hours'
-            ORDER BY c.direccion, p.fecha_facturado ASC
+            ORDER BY c.localidad, c.nombre_comercio ASC
         `;
         const { rows } = await pool.query(query);
         res.status(200).json(rows);
