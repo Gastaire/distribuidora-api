@@ -570,6 +570,132 @@ const getReporteCategoriasComparativa = async (req, res, next) => {
     }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/reportes/analisis-cliente-inactivo/:id
+// ─────────────────────────────────────────────────────────────────────────────
+const getAnalisisClienteInactivo = async (req, res, next) => {
+    const { id } = req.params;
+    try {
+        // 1. Historial mensual de pedidos (últimos 18 meses)
+        const historialMensual = await pool.query(`
+            SELECT 
+                TO_CHAR(DATE_TRUNC('month', p.fecha_creacion), 'YYYY-MM') as mes,
+                COUNT(p.id) as cantidad_pedidos,
+                COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) as monto_total
+            FROM pedidos p
+            LEFT JOIN pedido_items pi ON p.id = pi.pedido_id
+            WHERE p.cliente_id = $1
+              AND p.estado NOT IN ('cancelado', 'archivado')
+              AND p.fecha_creacion >= NOW() - INTERVAL '18 months'
+            GROUP BY DATE_TRUNC('month', p.fecha_creacion)
+            ORDER BY mes ASC
+        `, [id]);
+
+        // 2. Intervalo promedio entre pedidos
+        const intervalos = await pool.query(`
+            SELECT 
+                ROUND(AVG(diff_days)) as promedio_dias_entre_pedidos,
+                COUNT(*) as total_pedidos_historicos,
+                MIN(fecha_creacion) as primer_pedido,
+                MAX(fecha_creacion) as ultimo_pedido
+            FROM (
+                SELECT 
+                    fecha_creacion,
+                    EXTRACT(EPOCH FROM (fecha_creacion - LAG(fecha_creacion) OVER (ORDER BY fecha_creacion))) / 86400 as diff_days
+                FROM pedidos
+                WHERE cliente_id = $1
+                  AND estado NOT IN ('cancelado', 'archivado')
+            ) sub
+        `, [id]);
+
+        // 3. Productos que compró históricamente pero que YA NO aparecen en sus últimos 3 pedidos
+        //    (posible causa: el producto fue eliminado o dejó de pedirlo)
+        const productosAbandonados = await pool.query(`
+            WITH ultimos_pedidos AS (
+                SELECT id FROM pedidos 
+                WHERE cliente_id = $1 AND estado NOT IN ('cancelado', 'archivado')
+                ORDER BY fecha_creacion DESC LIMIT 3
+            ),
+            productos_historicos AS (
+                SELECT DISTINCT pi.nombre_producto, pi.producto_id
+                FROM pedido_items pi
+                JOIN pedidos p ON p.id = pi.pedido_id
+                WHERE p.cliente_id = $1
+                  AND p.estado NOT IN ('cancelado', 'archivado')
+                  AND p.fecha_creacion >= NOW() - INTERVAL '12 months'
+                  AND p.fecha_creacion < NOW() - INTERVAL '3 months'
+            ),
+            productos_recientes AS (
+                SELECT DISTINCT pi.nombre_producto
+                FROM pedido_items pi
+                WHERE pi.pedido_id IN (SELECT id FROM ultimos_pedidos)
+            ),
+            faltantes_del_cliente AS (
+                SELECT rf.nombre_producto, COUNT(*) as veces_faltante
+                FROM registro_faltantes rf
+                JOIN pedidos p ON p.id = rf.pedido_id
+                WHERE p.cliente_id = $1
+                GROUP BY rf.nombre_producto
+            )
+            SELECT 
+                ph.nombre_producto,
+                COALESCE(f.veces_faltante, 0) as veces_faltante,
+                CASE WHEN f.veces_faltante > 0 THEN true ELSE false END as tuvo_faltante
+            FROM productos_historicos ph
+            LEFT JOIN productos_recientes pr ON ph.nombre_producto = pr.nombre_producto
+            LEFT JOIN faltantes_del_cliente f ON ph.nombre_producto = f.nombre_producto
+            WHERE pr.nombre_producto IS NULL
+            ORDER BY veces_faltante DESC
+        `, [id]);
+
+        // 4. Productos eliminados de pedidos de este cliente (en registro_faltantes)
+        const productosEliminados = await pool.query(`
+            SELECT 
+                rf.nombre_producto,
+                COUNT(*) as veces_eliminado,
+                SUM(rf.cantidad_original) as unidades_eliminadas,
+                MAX(p.fecha_creacion) as ultima_vez
+            FROM registro_faltantes rf
+            JOIN pedidos p ON rf.pedido_id = p.id
+            WHERE p.cliente_id = $1
+            GROUP BY rf.nombre_producto
+            ORDER BY veces_eliminado DESC
+            LIMIT 10
+        `, [id]);
+
+        // 5. Info del cliente
+        const cliente = await pool.query(`
+            SELECT id, nombre_comercio, nombre_contacto, telefono, direccion, localidad
+            FROM clientes WHERE id = $1
+        `, [id]);
+
+        if (cliente.rows.length === 0) {
+            return res.status(404).json({ message: 'Cliente no encontrado' });
+        }
+
+        // Calcular tendencia: comparar promedio de pedidos del primer semestre vs segundo semestre
+        const meses = historialMensual.rows;
+        const mitad = Math.floor(meses.length / 2);
+        const primeraMitad = meses.slice(0, mitad);
+        const segundaMitad = meses.slice(mitad);
+        const promPrimera = primeraMitad.length > 0 ? primeraMitad.reduce((a, m) => a + parseInt(m.cantidad_pedidos), 0) / primeraMitad.length : 0;
+        const promSegunda = segundaMitad.length > 0 ? segundaMitad.reduce((a, m) => a + parseInt(m.cantidad_pedidos), 0) / segundaMitad.length : 0;
+        const tendencia = meses.length < 2 ? 'sin_datos' : (promSegunda < promPrimera * 0.7 ? 'caida_gradual' : promSegunda < promPrimera ? 'leve_baja' : 'estable');
+
+        res.status(200).json({
+            cliente: cliente.rows[0],
+            historial_mensual: meses,
+            tendencia,
+            intervalos: intervalos.rows[0],
+            productos_abandonados: productosAbandonados.rows,
+            productos_eliminados_de_pedidos: productosEliminados.rows,
+        });
+    } catch (error) {
+        console.error('Error en análisis cliente inactivo:', error);
+        next(error);
+    }
+};
+
 module.exports = {
     getReporteFaltantes,
     getReporteDiarioPedidos,
@@ -580,4 +706,5 @@ module.exports = {
     getReporteProductosMasPedidos,
     getReporteFaltantesHistorico,
     getReporteCategoriasComparativa,
+    getAnalisisClienteInactivo,
 };

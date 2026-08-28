@@ -12,6 +12,7 @@ const {
     getReporteProductosMasPedidos,
     getReporteFaltantesHistorico,
     getReporteCategoriasComparativa,
+    getAnalisisClienteInactivo,
 } = require('../controllers/reportes.controller');
 
 // Todos los reportes son admin-only
@@ -31,7 +32,10 @@ router.get('/reportes/clientes-inactivos', getReporteClientesInactivos);
 router.get('/reportes/productos-mas-pedidos', getReporteProductosMasPedidos);
 router.get('/reportes/faltantes-historico', getReporteFaltantesHistorico);
 
-// ─── Comparativa de categorías (nuevo — reemplaza AnalyticsView) ──────────────
+// ─── Comparativa de categorías (nuevo — reemplaza AnalyticsView) ──────────────────
 router.get('/reportes/categorias-comparativa', getReporteCategoriasComparativa);
+
+// ─── Análisis profundo de cliente inactivo ────────────────────────────────────
+router.get('/reportes/analisis-cliente-inactivo/:id', getAnalisisClienteInactivo);
 
 module.exports = router;

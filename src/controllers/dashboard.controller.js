@@ -92,25 +92,67 @@ const getDashboardStats = async (req, res) => {
 
             const totalCustomersQuery = `SELECT COUNT(*) AS "totalCustomers" FROM clientes`;
 
-            const [total, products, topFaltantes, lost, activeCust, totalCust] = await Promise.all([
+            const pendientesQuery = `
+                SELECT COUNT(*) AS count
+                FROM pedidos
+                WHERE estado = 'pendiente'`;
+
+            const facturados12hQuery = `
+                SELECT COUNT(*) AS count
+                FROM pedidos
+                WHERE estado = 'facturado'
+                  AND fecha_creacion >= NOW() - INTERVAL '12 hours'`;
+
+            const evolucionSemanalQuery = `
+                SELECT
+                    DATE(p.fecha_creacion) as dia,
+                    COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) as ingresos
+                FROM pedidos p
+                JOIN pedido_items pi ON p.id = pi.pedido_id
+                WHERE p.estado NOT IN ('cancelado', 'archivado')
+                  AND p.fecha_creacion >= NOW() - INTERVAL '14 days'
+                GROUP BY DATE(p.fecha_creacion)
+                ORDER BY dia ASC`;
+
+            const anioAnteriorSemanalQuery = `
+                SELECT
+                    EXTRACT(DOW FROM p.fecha_creacion) as dow,
+                    COALESCE(SUM(pi.cantidad * pi.precio_congelado), 0) as ingresos
+                FROM pedidos p
+                JOIN pedido_items pi ON p.id = pi.pedido_id
+                WHERE p.estado NOT IN ('cancelado', 'archivado')
+                  AND p.fecha_creacion >= NOW() - INTERVAL '1 year' - INTERVAL '7 days'
+                  AND p.fecha_creacion <= NOW() - INTERVAL '1 year' + INTERVAL '7 days'
+                GROUP BY EXTRACT(DOW FROM p.fecha_creacion)
+                ORDER BY dow ASC`;
+
+            const [total, products, topFaltantes, lost, activeCust, totalCust, pendientesResult, facturados12hResult, evolucionResult, anioAnteriorResult] = await Promise.all([
                 client.query(totalQuery, dateParams),
                 client.query(topProductsQuery, [...dateParams, topProductsLimit]),
                 client.query(topFaltantesQuery, faltParams),
                 client.query(lostSalesQuery, dateParams),
                 client.query(customersQuery, dateParams),
                 client.query(totalCustomersQuery),
+                client.query(pendientesQuery),
+                client.query(facturados12hQuery),
+                client.query(evolucionSemanalQuery),
+                client.query(anioAnteriorSemanalQuery),
             ]);
 
             stats = {
-                totalRevenue:     total.rows[0]?.totalRevenue,
-                totalOrders:      total.rows[0]?.totalOrders,
-                unidadesVendidas: total.rows[0]?.unidadesVendidas,
-                topProducts:      products.rows,
-                topFaltantes:     topFaltantes.rows,
-                lostRevenue:      lost.rows[0]?.lostRevenue,
-                lostUnits:        lost.rows[0]?.lostUnits,
-                activeCustomers:  activeCust.rows[0]?.activeCustomers,
-                totalCustomers:   totalCust.rows[0]?.totalCustomers,
+                totalRevenue:           total.rows[0]?.totalRevenue,
+                totalOrders:            total.rows[0]?.totalOrders,
+                unidadesVendidas:       total.rows[0]?.unidadesVendidas,
+                topProducts:            products.rows,
+                topFaltantes:           topFaltantes.rows,
+                lostRevenue:            lost.rows[0]?.lostRevenue,
+                lostUnits:              lost.rows[0]?.lostUnits,
+                activeCustomers:        activeCust.rows[0]?.activeCustomers,
+                totalCustomers:         totalCust.rows[0]?.totalCustomers,
+                pedidos_pendientes:     pendientesResult.rows[0]?.count || 0,
+                facturados_12h:         facturados12hResult.rows[0]?.count || 0,
+                evolucion_semanal:      evolucionResult.rows,
+                anio_anterior_semanal:  anioAnteriorResult.rows,
             };
 
         // ─────────────────────────────────────────────────────────────────────
