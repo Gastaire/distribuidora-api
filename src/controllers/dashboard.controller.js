@@ -95,7 +95,8 @@ const getDashboardStats = async (req, res) => {
             const pendientesQuery = `
                 SELECT COUNT(*) AS count
                 FROM pedidos
-                WHERE estado = 'pendiente'`;
+                WHERE estado = 'pendiente'
+                  AND fecha_creacion >= NOW() - INTERVAL '7 days'`;
 
             const facturados12hQuery = `
                 SELECT COUNT(*) AS count
