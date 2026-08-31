@@ -68,9 +68,13 @@ exports.deleteUsuario = async (req, res) => {
     try {
         const result = await db.query('UPDATE usuarios SET activo = false WHERE id = $1', [id]);
         if (result.rowCount === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
+        
+        // Liberar a los clientes asignados a este vendedor
+        await db.query('UPDATE clientes SET vendedor_id = null, vendedor_nombre = null WHERE vendedor_id = $1', [id]);
+        
         res.status(204).send();
     } catch (error) {
-        res.status(500).json({ message: 'Error interno del servidor.' });
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
 };
 

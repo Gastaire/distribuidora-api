@@ -29,7 +29,8 @@ const protect = (req, res, next) => {
 
 const authorize = (...roles) => {
     return (req, res, next) => {
-        if (!req.user || !roles.includes(req.user.rol)) {
+        const userRole = req.user && req.user.rol ? req.user.rol.toLowerCase() : 'invitado';
+        if (!req.user || !roles.includes(userRole)) {
             return res.status(403).json({ 
                 message: `El rol '${req.user ? req.user.rol : 'invitado'}' no tiene permiso para realizar esta acción` 
             });
