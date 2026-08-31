@@ -363,7 +363,7 @@ const getMisPedidosHistoricos = async (req, res) => {
             FROM pedidos p
             LEFT JOIN clientes c ON p.cliente_id = c.id
             LEFT JOIN usuarios u ON p.usuario_id = u.id
-            WHERE p.usuario_id = $1 AND p.fecha_creacion < NOW() - INTERVAL '72 hours'
+            WHERE p.usuario_id = $1
             ORDER BY p.fecha_creacion DESC
             LIMIT 100; -- Limitamos para no sobrecargar
         `;
