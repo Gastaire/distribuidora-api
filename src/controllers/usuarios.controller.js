@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 // Obtener todos los usuarios
 exports.getUsuarios = async (req, res) => {
     try {
-        const { rows } = await db.query('SELECT id, nombre, email, rol FROM usuarios ORDER BY nombre ASC');
+        const { rows } = await db.query('SELECT id, nombre, email, rol, activo FROM usuarios ORDER BY nombre ASC');
         res.status(200).json(rows);
     } catch (error) {
         res.status(500).json({ message: 'Error interno del servidor' });
@@ -58,7 +58,7 @@ exports.updateUsuario = async (req, res) => {
     }
 };
 
-// Eliminar un usuario
+// Eliminar un usuario (Soft Delete)
 exports.deleteUsuario = async (req, res) => {
     const { id } = req.params;
     // Prevenir que un admin se elimine a sí mismo
@@ -66,9 +66,21 @@ exports.deleteUsuario = async (req, res) => {
         return res.status(400).json({ message: 'No puedes eliminar tu propia cuenta.' });
     }
     try {
-        const result = await db.query('DELETE FROM usuarios WHERE id = $1', [id]);
+        const result = await db.query('UPDATE usuarios SET activo = false WHERE id = $1', [id]);
         if (result.rowCount === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
         res.status(204).send();
+    } catch (error) {
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+};
+
+// Restaurar un usuario (Re-activar)
+exports.restoreUsuario = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await db.query('UPDATE usuarios SET activo = true WHERE id = $1', [id]);
+        if (result.rowCount === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
+        res.status(200).json({ message: 'Usuario restaurado' });
     } catch (error) {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }

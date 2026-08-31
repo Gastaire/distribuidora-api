@@ -40,6 +40,9 @@ const login = async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: 'Credenciales inválidas' });
     }
+    if (user.activo === false) {
+      return res.status(403).json({ message: 'Cuenta desactivada. Contacta al administrador.' });
+    }
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: 'Credenciales inválidas' });
