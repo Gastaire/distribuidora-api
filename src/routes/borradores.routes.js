@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { saveBorrador, getBorradores } = require('../controllers/borradores.controller');
+const { saveBorrador, getBorradores, deleteBorrador } = require('../controllers/borradores.controller');
 const { protect } = require('../middleware/auth.middleware');
 
 const router = Router();
@@ -12,5 +12,8 @@ router.post('/borradores', protect, saveBorrador);
 
 // Ruta para obtener todos los borradores del usuario logueado
 router.get('/borradores', protect, getBorradores);
+
+// Ruta para eliminar un borrador de un cliente
+router.delete('/borradores/:cliente_local_id', protect, deleteBorrador);
 
 module.exports = router;

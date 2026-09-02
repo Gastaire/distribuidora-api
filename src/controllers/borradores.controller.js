@@ -50,7 +50,25 @@ const getBorradores = async (req, res) => {
     }
 };
 
+/**
+ * @description Elimina un borrador de un usuario por cliente_local_id.
+ */
+const deleteBorrador = async (req, res) => {
+    const { id: usuario_id } = req.user;
+    const { cliente_local_id } = req.params;
+
+    try {
+        const query = 'DELETE FROM borradores WHERE usuario_id = $1 AND cliente_local_id = $2';
+        await pool.query(query, [usuario_id, cliente_local_id]);
+        res.status(200).json({ success: true, message: 'Borrador eliminado.' });
+    } catch (error) {
+        console.error('Error al eliminar borrador:', error);
+        res.status(500).json({ message: 'Error interno del servidor al eliminar el borrador.' });
+    }
+};
+
 module.exports = {
     saveBorrador,
     getBorradores,
+    deleteBorrador,
 };
