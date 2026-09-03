@@ -55,4 +55,5 @@ app.use('/api', configRoutes);
 // Iniciar el servidor
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en el puerto ${PORT}`);
+  console.log(`[v2.0 - Sept 2026] Rutas activas: /api/cronograma (alias), /api/borradores (DELETE)`);
 });
