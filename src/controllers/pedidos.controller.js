@@ -30,7 +30,7 @@ const manageBackups = async () => {
 
 // --- CREAR un nuevo pedido (VERSIÓN MEJORADA) ---
 const createPedido = async (req, res) => {
-    let { cliente_id, items, notas_entrega, lista_precios_id } = req.body;
+    let { cliente_id, items, notas_entrega, lista_precios_id, fecha_entrega_programada } = req.body;
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -71,8 +71,20 @@ const createPedido = async (req, res) => {
             }
         }
 
-        const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega, lista_precios_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, fecha_creacion';
-        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, 'pendiente', final_notas_entrega, final_lista_precios_id]);
+        // Calcular fecha de activación: día anterior a la entrega a las 16:30 ARG (UTC-3 = 19:30 UTC)
+        let fecha_activacion = null;
+        let estado_pedido = 'pendiente';
+        if (fecha_entrega_programada) {
+            // Construir la fecha de activación: fecha_entrega_programada - 1 día a las 16:30 hora Argentina (19:30 UTC)
+            const entrega = new Date(fecha_entrega_programada + 'T00:00:00-03:00');
+            entrega.setDate(entrega.getDate() - 1); // día anterior
+            entrega.setHours(19, 30, 0, 0); // 16:30 ARG = 19:30 UTC
+            fecha_activacion = entrega.toISOString();
+            estado_pedido = 'programado';
+        }
+
+        const pedidoQuery = 'INSERT INTO pedidos (cliente_id, usuario_id, estado, notas_entrega, lista_precios_id, fecha_entrega_programada, fecha_activacion) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, fecha_creacion';
+        const pedidoResult = await client.query(pedidoQuery, [final_cliente_id, usuario_id, estado_pedido, final_notas_entrega, final_lista_precios_id, fecha_entrega_programada || null, fecha_activacion]);
         const nuevoPedidoId = pedidoResult.rows[0].id;
         const fechaCreacion = pedidoResult.rows[0].fecha_creacion;
         
@@ -303,22 +315,69 @@ const getPedidoById = async (req, res) => {
 
 const getPedidos = async (req, res) => {
     const { rol, id: usuario_id } = req.user;
+    const ahoraISO = new Date().toISOString();
+    const dosHorasAtrasISO = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+    // Pedidos que el admin/depósito puede ver:
+    // - todos los no-programados
+    // - programados con fecha_activacion ya pasada (se muestran al admin)
+    // Pedidos ocultos: programados cuya activación aún no llegó
+    let baseFilter = `
+        AND NOT (
+            p.estado = 'programado'
+            AND (p.fecha_activacion IS NULL OR p.fecha_activacion > $1)
+        )
+    `;
+
     let query = `
-        SELECT p.id, p.fecha_creacion, p.estado, p.cliente_id, c.nombre_comercio, u.nombre as nombre_vendedor
+        SELECT 
+            p.id, p.fecha_creacion, p.estado, p.cliente_id,
+            p.fecha_entrega_programada, p.fecha_activacion,
+            c.nombre_comercio, u.nombre as nombre_vendedor,
+            -- Flag para mostrar badge "Recién activado" en las 2 horas post-activación
+            CASE 
+                WHEN p.estado = 'programado' 
+                     AND p.fecha_activacion IS NOT NULL
+                     AND p.fecha_activacion <= $1
+                     AND p.fecha_activacion >= $2
+                THEN true ELSE false
+            END as recien_activado
         FROM pedidos p
         LEFT JOIN clientes c ON p.cliente_id = c.id
         LEFT JOIN usuarios u ON p.usuario_id = u.id
+        WHERE 1=1 ${baseFilter}
     `;
-    const queryParams = [];
+    let queryParams = [ahoraISO, dosHorasAtrasISO];
 
     if (rol === 'vendedor') {
-        query += ' WHERE p.usuario_id = $1';
-        queryParams.push(usuario_id);
+        // Vendedores ven sus propios pedidos (incluyendo programados, todos)
+        query = `
+            SELECT 
+                p.id, p.fecha_creacion, p.estado, p.cliente_id,
+                p.fecha_entrega_programada, p.fecha_activacion,
+                c.nombre_comercio, u.nombre as nombre_vendedor,
+                false as recien_activado
+            FROM pedidos p
+            LEFT JOIN clientes c ON p.cliente_id = c.id
+            LEFT JOIN usuarios u ON p.usuario_id = u.id
+            WHERE p.usuario_id = $1
+        `;
+        queryParams = [usuario_id];
     } else if (rol === 'deposito') {
-        query += " WHERE p.estado IN ('pendiente', 'visto', 'en_preparacion', 'listo_para_entrega', 'entregado')";
+        query += " AND p.estado IN ('pendiente', 'visto', 'en_preparacion', 'listo_para_entrega', 'entregado')";
     }
 
-    query += ' ORDER BY p.fecha_creacion DESC';
+    // Ordenar: primero los recién activados (por fecha_activacion DESC), luego el resto (por fecha_creacion DESC)
+    // Para admin/depósito esto pone los programados activados al tope
+    if (rol !== 'vendedor') {
+        query += ` ORDER BY recien_activado DESC, 
+            CASE WHEN p.fecha_activacion IS NOT NULL AND p.fecha_activacion <= $1 AND p.fecha_activacion >= $2
+                 THEN p.fecha_activacion 
+                 ELSE p.fecha_creacion 
+            END DESC`;
+    } else {
+        query += ' ORDER BY p.fecha_creacion DESC';
+    }
 
     try {
         const { rows } = await pool.query(query, queryParams);

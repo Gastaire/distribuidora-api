@@ -5,6 +5,7 @@ const {
   createCliente,
   updateCliente,
   deleteCliente,
+  updateZonaManual,
 } = require('../controllers/clientes.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
@@ -18,7 +19,8 @@ router.get('/clientes/:id', protect, getClienteById);
 router.post('/clientes', protect, authorize('admin', 'vendedor'), createCliente);
 router.put('/clientes/:id', protect, authorize('admin', 'vendedor'), updateCliente);
 
-// Solo los administradores pueden eliminar clientes
+// Solo los administradores pueden eliminar clientes o sobreescribir zonas manualmente
 router.delete('/clientes/:id', protect, authorize('admin'), deleteCliente);
+router.patch('/clientes/:id/zona', protect, authorize('admin'), updateZonaManual);
 
 module.exports = router;
