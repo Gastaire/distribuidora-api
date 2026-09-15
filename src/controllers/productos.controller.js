@@ -103,27 +103,31 @@ const createProducto = async (req, res, next) => {
 const updateProducto = async (req, res, next) => {
     const { id } = req.params;
     const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria, controla_stock, stock_cantidad } = req.body;
+    
+    // Solo actualizar los campos que se envían en el body
+    const fieldsToUpdate = [];
+    const values = [];
+    let counter = 1;
+
+    if (codigo_sku !== undefined) { fieldsToUpdate.push(`codigo_sku = $${counter++}`); values.push(codigo_sku); }
+    if (nombre !== undefined) { fieldsToUpdate.push(`nombre = $${counter++}`); values.push(nombre); }
+    if (descripcion !== undefined) { fieldsToUpdate.push(`descripcion = $${counter++}`); values.push(descripcion); }
+    if (precio_unitario !== undefined) { fieldsToUpdate.push(`precio_unitario = $${counter++}`); values.push(precio_unitario); }
+    if (stock !== undefined) { fieldsToUpdate.push(`stock = $${counter++}`); values.push(stock); }
+    if (imagen_url !== undefined) { fieldsToUpdate.push(`imagen_url = $${counter++}`); values.push(imagen_url); }
+    if (categoria !== undefined) { fieldsToUpdate.push(`categoria = $${counter++}`); values.push(categoria); }
+    if (controla_stock !== undefined) { fieldsToUpdate.push(`controla_stock = $${counter++}`); values.push(controla_stock); }
+    if (stock_cantidad !== undefined) { fieldsToUpdate.push(`stock_cantidad = $${counter++}`); values.push(stock_cantidad); }
+
+    if (fieldsToUpdate.length === 0) {
+        return res.status(400).json({ message: 'No hay campos para actualizar' });
+    }
+
+    values.push(id);
+    const query = `UPDATE productos SET ${fieldsToUpdate.join(', ')} WHERE id = $${counter} RETURNING *`;
+
     try {
-        // COALESCE: solo actualiza los campos que vienen en el body, el resto queda como estaba.
-        // Esto permite actualizaciones parciales desde el QuickEditModal (imagen, stock, categoria)
-        // sin perder los demás datos del producto.
-        const { rows } = await db.query(
-            `UPDATE productos SET
-                codigo_sku      = COALESCE($1, codigo_sku),
-                nombre          = COALESCE($2, nombre),
-                descripcion     = COALESCE($3, descripcion),
-                precio_unitario = COALESCE($4, precio_unitario),
-                stock           = COALESCE($5, stock),
-                imagen_url      = COALESCE($6, imagen_url),
-                categoria       = COALESCE($7, categoria),
-                controla_stock  = COALESCE($8, controla_stock),
-                stock_cantidad  = COALESCE($9, stock_cantidad)
-            WHERE id = $10
-            RETURNING *`,
-            [codigo_sku ?? null, nombre ?? null, descripcion ?? null, precio_unitario ?? null,
-             stock ?? null, imagen_url ?? null, categoria ?? null, controla_stock ?? null,
-             stock_cantidad ?? null, id]
-        );
+        const { rows } = await db.query(query, values);
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
