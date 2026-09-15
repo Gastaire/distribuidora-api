@@ -146,7 +146,7 @@ const createPedido = async (req, res) => {
 
 const updatePedido = async (req, res) => {
     const { id: pedido_id } = req.params;
-    const { items, notas_entrega } = req.body;
+    const { items, notas_entrega, fecha_entrega_programada } = req.body;
     const { id: usuario_id, nombre: nombre_usuario, rol } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -172,23 +172,30 @@ const updatePedido = async (req, res) => {
         }
 
         if (rol !== 'admin') {
-            if (pedidoOriginal.estado !== 'pendiente') {
+            // Vendedores pueden editar pedidos 'pendiente' o 'programado' (no en preparación)
+            const estadosEditables = ['pendiente', 'programado', 'visto'];
+            if (!estadosEditables.includes(pedidoOriginal.estado)) {
                 await client.query('ROLLBACK');
                 client.release();
                 return res.status(403).json({ message: `No se puede editar un pedido que ya está en estado '${pedidoOriginal.estado}'.` });
             }
-            const ahora = new Date();
-            const fechaCreacion = new Date(pedidoOriginal.fecha_creacion);
-            const doceHorasEnMs = 12 * 60 * 60 * 1000;
-
-            if ((ahora - fechaCreacion) > doceHorasEnMs) {
-                await client.query('ROLLBACK');
-                client.release();
-                return res.status(403).json({ message: 'El tiempo para editar este pedido (12 horas) ha expirado.' });
-            }
         }
 
-        await client.query('UPDATE pedidos SET notas_entrega = $1 WHERE id = $2', [notas_entrega || '', pedido_id]);
+        // Calcular nuevo estado y fecha_activacion según si se programa o no
+        let nuevoEstado = fecha_entrega_programada ? 'programado' : 'pendiente';
+        let nuevaFechaActivacion = null;
+        if (fecha_entrega_programada) {
+            const entrega = new Date(fecha_entrega_programada + 'T00:00:00-03:00');
+            entrega.setDate(entrega.getDate() - 1);
+            entrega.setHours(19, 30, 0, 0); // 16:30 ARG = 19:30 UTC
+            nuevaFechaActivacion = entrega.toISOString();
+        }
+
+        // Actualizar estado, notas, programación
+        await client.query(
+            'UPDATE pedidos SET notas_entrega = $1, estado = $2, fecha_entrega_programada = $3, fecha_activacion = $4 WHERE id = $5',
+            [notas_entrega || '', nuevoEstado, fecha_entrega_programada || null, nuevaFechaActivacion, pedido_id]
+        );
         await client.query('DELETE FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
 
         for (const item of items) {
@@ -200,11 +207,14 @@ const updatePedido = async (req, res) => {
              await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
         }
         
-        const logDetail = `El usuario ${nombre_usuario} actualizó el pedido #${pedido_id}.`;
-        await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'ACTUALIZAR_PEDIDO', logDetail]);
+        const accion = fecha_entrega_programada ? 'REPROGRAMAR_PEDIDO' : 'ACTUALIZAR_PEDIDO';
+        const logDetail = fecha_entrega_programada
+            ? `${nombre_usuario} reprogramó el pedido #${pedido_id} para ${fecha_entrega_programada}.`
+            : `${nombre_usuario} actualizó el pedido #${pedido_id}.`;
+        await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, accion, logDetail]);
 
         await client.query('COMMIT');
-        res.status(200).json({ message: 'Pedido actualizado exitosamente.' });
+        res.status(200).json({ message: fecha_entrega_programada ? 'Pedido reprogramado exitosamente.' : 'Pedido actualizado exitosamente.' });
 
     } catch (error) {
         await client.query('ROLLBACK');

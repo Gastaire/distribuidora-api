@@ -102,14 +102,28 @@ const createProducto = async (req, res, next) => {
 
 const updateProducto = async (req, res, next) => {
     const { id } = req.params;
-    // --- INICIO DE LA MODIFICACIÓN: Recibir nuevos campos de stock ---
     const { codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria, controla_stock, stock_cantidad } = req.body;
     try {
+        // COALESCE: solo actualiza los campos que vienen en el body, el resto queda como estaba.
+        // Esto permite actualizaciones parciales desde el QuickEditModal (imagen, stock, categoria)
+        // sin perder los demás datos del producto.
         const { rows } = await db.query(
-            'UPDATE productos SET codigo_sku = $1, nombre = $2, descripcion = $3, precio_unitario = $4, stock = $5, imagen_url = $6, categoria = $7, controla_stock = $8, stock_cantidad = $9 WHERE id = $10 RETURNING *',
-            [codigo_sku, nombre, descripcion, precio_unitario, stock, imagen_url, categoria, controla_stock, stock_cantidad, id]
+            `UPDATE productos SET
+                codigo_sku      = COALESCE($1, codigo_sku),
+                nombre          = COALESCE($2, nombre),
+                descripcion     = COALESCE($3, descripcion),
+                precio_unitario = COALESCE($4, precio_unitario),
+                stock           = COALESCE($5, stock),
+                imagen_url      = COALESCE($6, imagen_url),
+                categoria       = COALESCE($7, categoria),
+                controla_stock  = COALESCE($8, controla_stock),
+                stock_cantidad  = COALESCE($9, stock_cantidad)
+            WHERE id = $10
+            RETURNING *`,
+            [codigo_sku ?? null, nombre ?? null, descripcion ?? null, precio_unitario ?? null,
+             stock ?? null, imagen_url ?? null, categoria ?? null, controla_stock ?? null,
+             stock_cantidad ?? null, id]
         );
-        // --- FIN DE LA MODIFICACIÓN ---
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
