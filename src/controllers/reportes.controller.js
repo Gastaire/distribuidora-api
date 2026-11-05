@@ -454,8 +454,10 @@ const getReporteFaltantesHistorico = async (req, res, next) => {
                     rf.nombre_producto,
                     rf.cantidad_original,
                     rf.fecha_registro,
-                    rf.nombre_usuario_modifico AS modificado_por
+                    rf.nombre_usuario_modifico AS modificado_por,
+                    rf.cantidad_original * producto.precio_unitario AS monto_estimado
                 FROM registro_faltantes rf
+                LEFT JOIN productos producto ON producto.id = rf.producto_id
                 ${whereClause}
                 ORDER BY rf.fecha_registro DESC
                 LIMIT ${limitParam}
@@ -466,12 +468,15 @@ const getReporteFaltantesHistorico = async (req, res, next) => {
 
             const agrupado = await client.query(`
                 SELECT
-                    nombre_producto,
-                    SUM(cantidad_original) AS total_faltante,
-                    COUNT(*)               AS veces_removido
+                    rf.nombre_producto,
+                    SUM(rf.cantidad_original) AS total_faltante,
+                    COUNT(*) AS veces_removido,
+                    SUM(rf.cantidad_original * producto.precio_unitario) AS monto_estimado,
+                    COUNT(*) FILTER (WHERE producto.precio_unitario IS NULL) AS registros_sin_precio
                 FROM registro_faltantes rf
+                LEFT JOIN productos producto ON producto.id = rf.producto_id
                 ${whereAgg}
-                GROUP BY nombre_producto
+                GROUP BY rf.nombre_producto
                 ORDER BY total_faltante DESC
                 LIMIT 20
             `, paramsAgrupado);
@@ -695,6 +700,78 @@ const getAnalisisClienteInactivo = async (req, res, next) => {
     }
 };
 
+// Compare the same calendar dates a year apart. Monetary amounts are nominal ARS.
+const getReporteInteranual = async (req, res, next) => {
+    const { startDate, endDate } = req.query;
+    const valid = value => {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const date = new Date(value);
+        return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!valid(startDate) || !valid(endDate) || startDate > endDate ||
+        (new Date(endDate) - new Date(startDate)) / 86400000 >= 366) {
+        return res.status(400).json({ message: 'Elegí un período válido de hasta 366 días.' });
+    }
+    try {
+        const { rows } = await pool.query(`
+            WITH limites AS (
+                SELECT $1::date AS desde, $2::date AS hasta,
+                    ($1::date - INTERVAL '1 year')::date AS desde_anterior,
+                    ($2::date - INTERVAL '1 year')::date AS hasta_anterior
+            ), ventanas AS (
+                SELECT true AS actual, desde, hasta FROM limites
+                UNION ALL
+                SELECT false, desde_anterior, hasta_anterior FROM limites
+            ), lineas AS (
+                SELECT v.actual, p.id AS pedido, p.cliente_id,
+                    COALESCE(c.nombre_comercio, 'Sin cliente') AS cliente,
+                    COALESCE(pi.producto_id::text, 'nombre:' || pi.nombre_producto) AS producto_id,
+                    pi.nombre_producto AS producto,
+                    COALESCE(NULLIF(pr.categoria, ''), 'Sin categoría') AS categoria,
+                    COALESCE(pi.cantidad, 0) AS unidades,
+                    COALESCE(pi.cantidad * pi.precio_congelado, 0) AS monto
+                FROM ventanas v
+                JOIN pedidos p ON p.fecha_creacion >= v.desde AND p.fecha_creacion < v.hasta + 1
+                LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
+                LEFT JOIN clientes c ON c.id = p.cliente_id
+                LEFT JOIN productos pr ON pr.id = pi.producto_id
+                WHERE p.estado NOT IN ${ESTADOS_EXCLUIDOS}
+            ), comparativa AS (
+                SELECT d.tipo, d.clave, COALESCE(MAX(d.nombre) FILTER (WHERE l.actual), MAX(d.nombre)) AS nombre,
+                    COALESCE(SUM(l.monto) FILTER (WHERE l.actual), 0) AS monto_actual,
+                    COALESCE(SUM(l.monto) FILTER (WHERE NOT l.actual), 0) AS monto_anterior,
+                    COALESCE(SUM(l.unidades) FILTER (WHERE l.actual), 0) AS unidades_actual,
+                    COALESCE(SUM(l.unidades) FILTER (WHERE NOT l.actual), 0) AS unidades_anterior,
+                    COUNT(DISTINCT l.pedido) FILTER (WHERE l.actual) AS pedidos_actual,
+                    COUNT(DISTINCT l.pedido) FILTER (WHERE NOT l.actual) AS pedidos_anterior,
+                    COUNT(DISTINCT l.cliente_id) FILTER (WHERE l.actual) AS clientes_actual,
+                    COUNT(DISTINCT l.cliente_id) FILTER (WHERE NOT l.actual) AS clientes_anterior
+                FROM lineas l
+                CROSS JOIN LATERAL (VALUES
+                    ('total', 'total', 'Total'),
+                    ('productos', l.producto_id, l.producto),
+                    ('clientes', l.cliente_id::text, l.cliente),
+                    ('categorias', CASE WHEN l.producto_id IS NOT NULL THEN l.categoria END, l.categoria)
+                ) AS d(tipo, clave, nombre)
+                WHERE d.clave IS NOT NULL
+                GROUP BY d.tipo, d.clave
+            ), ranking AS (
+                SELECT *, monto_actual - monto_anterior AS variacion,
+                    ROW_NUMBER() OVER (PARTITION BY tipo ORDER BY ABS(monto_actual - monto_anterior) DESC, clave) AS posicion
+                FROM comparativa
+            )
+            SELECT to_char(l.desde_anterior, 'YYYY-MM-DD') AS desde_anterior,
+                to_char(l.hasta_anterior, 'YYYY-MM-DD') AS hasta_anterior,
+                COALESCE((SELECT json_agg(r ORDER BY r.tipo, r.posicion) FROM ranking r WHERE r.posicion <= 30), '[]'::json) AS filas
+            FROM limites l
+        `, [startDate, endDate]);
+        const result = rows[0];
+        res.json({ desde: startDate, hasta: endDate, ...result });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getReporteFaltantes,
     getReporteDiarioPedidos,
@@ -704,6 +781,7 @@ module.exports = {
     getReporteClientesInactivos,
     getReporteProductosMasPedidos,
     getReporteFaltantesHistorico,
+    getReporteInteranual,
     getReporteCategoriasComparativa,
     getAnalisisClienteInactivo,
 };

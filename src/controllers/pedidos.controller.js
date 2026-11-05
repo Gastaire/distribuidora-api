@@ -757,6 +757,7 @@ const getHojaRuta = async (req, res, next) => {
                 CASE WHEN c.zona_manual IS TRUE THEN NULLIF(c.zona, '') END AS zona_operativa,
                 c.horario_atencion,
                 c.horario_recepcion,
+                c.horario_entrega,
                 u.nombre as nombre_vendedor,
                 COALESCE((
                     SELECT SUM(pi.cantidad * pi.precio_congelado) 

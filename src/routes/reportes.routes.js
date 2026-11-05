@@ -11,6 +11,7 @@ const {
     getReporteClientesInactivos,
     getReporteProductosMasPedidos,
     getReporteFaltantesHistorico,
+    getReporteInteranual,
     getReporteCategoriasComparativa,
     getAnalisisClienteInactivo,
 } = require('../controllers/reportes.controller');
@@ -31,6 +32,7 @@ router.get('/reportes/pedidos-entregados', getReportePedidosEntregados);
 router.get('/reportes/clientes-inactivos', getReporteClientesInactivos);
 router.get('/reportes/productos-mas-pedidos', getReporteProductosMasPedidos);
 router.get('/reportes/faltantes-historico', getReporteFaltantesHistorico);
+router.get('/reportes/interanual', getReporteInteranual);
 
 // ─── Comparativa de categorías (nuevo — reemplaza AnalyticsView) ──────────────────
 router.get('/reportes/categorias-comparativa', getReporteCategoriasComparativa);
