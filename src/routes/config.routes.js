@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { getCronograma, updateDiaCronograma, repeatCronogramaPattern } = require('../controllers/config.controller');
+const { getCronograma, updateDiaCronograma, updateCronogramaBatch, repeatCronogramaPattern } = require('../controllers/config.controller');
 const { protect, authorize } = require('../middleware/auth.middleware');
 
 const router = Router();
@@ -10,6 +10,7 @@ router.get('/config/cronograma', protect, getCronograma);
 router.get('/cronograma', protect, getCronograma);
 
 // Solo el admin puede modificar el cronograma
+router.put('/config/cronograma/lote', protect, authorize('admin'), updateCronogramaBatch);
 router.put('/config/cronograma', protect, authorize('admin'), updateDiaCronograma);
 router.post('/config/cronograma/repetir', protect, authorize('admin'), repeatCronogramaPattern);
 

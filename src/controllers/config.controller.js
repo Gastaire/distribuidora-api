@@ -103,8 +103,33 @@ const repeatCronogramaPattern = async (req, res, next) => {
     }
 };
 
+// Save a repeating delivery schedule as one atomic operation.
+const updateCronogramaBatch = async (req, res, next) => {
+    const { fechas, zonas } = req.body;
+    const validDate = value => {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+        const date = new Date(value);
+        return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
+    if (!Array.isArray(fechas) || !fechas.length || fechas.length > 53 ||
+        !fechas.every(validDate) || typeof zonas !== 'string' || !zonas.trim()) {
+        return res.status(400).json({ message: 'Ingresá hasta 53 fechas válidas y al menos una zona.' });
+    }
+    try {
+        const result = await pool.query(`
+            INSERT INTO cronograma_entregas (fecha, zonas)
+            SELECT dia, $2 FROM unnest($1::date[]) AS dia
+            ON CONFLICT (fecha) DO UPDATE SET zonas = EXCLUDED.zonas
+        `, [[...new Set(fechas)], zonas.trim()]);
+        res.json({ dias: result.rowCount });
+    } catch (err) {
+        next(err);
+    }
+};
+
 module.exports = {
     getCronograma,
     updateDiaCronograma,
+    updateCronogramaBatch,
     repeatCronogramaPattern
 };

@@ -754,6 +754,7 @@ const getHojaRuta = async (req, res, next) => {
                 c.nombre_comercio, 
                 c.direccion, 
                 c.localidad,
+                CASE WHEN c.zona_manual IS TRUE THEN NULLIF(c.zona, '') END AS zona_operativa,
                 c.horario_atencion,
                 c.horario_recepcion,
                 u.nombre as nombre_vendedor,
@@ -767,7 +768,7 @@ const getHojaRuta = async (req, res, next) => {
             LEFT JOIN usuarios u ON p.usuario_id = u.id
             WHERE p.estado = 'facturado' 
               AND p.fecha_facturado >= NOW() - INTERVAL '6 hours'
-            ORDER BY c.localidad, c.nombre_comercio ASC
+            ORDER BY COALESCE(CASE WHEN c.zona_manual IS TRUE THEN NULLIF(c.zona, '') END, c.localidad), c.nombre_comercio ASC
         `;
         const { rows } = await pool.query(query);
         res.status(200).json(rows);

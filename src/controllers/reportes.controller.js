@@ -87,7 +87,7 @@ const getReporteResumenEjecutivo = async (req, res, next) => {
 
             // 2. Conteos por estado (incluyendo cancelados para calcular tasas)
             const paramsTodos = [];
-            const condTodos = [];
+            const condTodos = ["p.estado != 'archivado'"];
             if (desde) { condTodos.push(`p.fecha_creacion >= $${paramsTodos.length + 1}`); paramsTodos.push(desde); }
             if (hasta) { condTodos.push(`p.fecha_creacion < ($${paramsTodos.length + 1}::date + INTERVAL '1 day')`); paramsTodos.push(hasta); }
             const whereTodos = condTodos.length ? `WHERE ${condTodos.join(' AND ')}` : '';
@@ -101,7 +101,6 @@ const getReporteResumenEjecutivo = async (req, res, next) => {
                 FROM pedidos p
                 LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
                 ${whereTodos}
-                AND p.estado != 'archivado'
                 GROUP BY p.estado
                 ORDER BY total_pedidos DESC
             `, paramsTodos);

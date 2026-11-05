@@ -76,39 +76,27 @@ const createCliente = async (req, res) => {
 
 const updateCliente = async (req, res) => {
     const { id } = req.params;
-    const { nombre_comercio, nombre_contacto, direccion, telefono, localidad, latitud, longitud, horario_atencion, horario_entrega, vendedor_id, vendedor_nombre } = req.body;
+    const campos = [
+        'nombre_comercio', 'nombre_contacto', 'direccion', 'telefono', 'localidad',
+        'latitud', 'longitud', 'horario_atencion', 'horario_entrega', 'vendedor_id', 'vendedor_nombre'
+    ];
+    const params = [id];
+    const cambios = [];
+    for (const campo of campos) {
+        if (!Object.prototype.hasOwnProperty.call(req.body, campo)) continue;
+        const valor = req.body[campo];
+        params.push(valor === '' && campos.indexOf(campo) >= 4 ? null : valor);
+        cambios.push(`${campo} = $${params.length}`);
+    }
+    if (!cambios.length) return res.status(400).json({ message: 'No hay datos para actualizar.' });
 
-    // Recalcular zona por GPS solo si no fue marcada como manual
-    let zonaUpdate = '';
-    let zonaParams = [];
-    
+    const { latitud, longitud } = req.body;
+    if (latitud && longitud) {
+        params.push(detectarZona(latitud, longitud));
+        cambios.push(`zona = CASE WHEN zona_manual IS TRUE THEN zona ELSE $${params.length} END`);
+    }
+    const query = `UPDATE clientes SET ${cambios.join(', ')} WHERE id = $1 RETURNING *`;
     try {
-        // Chequeamos si el cliente tiene zona_manual antes de sobreescribir
-        const existingResult = await db.query('SELECT zona_manual FROM clientes WHERE id = $1', [id]);
-        const esManual = existingResult.rows[0]?.zona_manual;
-        
-        if (!esManual && (latitud || longitud)) {
-            const nuevaZona = detectarZona(latitud, longitud);
-            zonaUpdate = ', zona = $13';
-            zonaParams = [nuevaZona];
-        }
-
-        const params = [
-            nombre_comercio, nombre_contacto, direccion, telefono,
-            localidad || null, latitud || null, longitud || null,
-            horario_atencion || null, horario_entrega || null,
-            vendedor_id || null, vendedor_nombre || null,
-            id,
-            ...zonaParams
-        ];
-
-        const query = `UPDATE clientes SET 
-            nombre_comercio = $1, nombre_contacto = $2, direccion = $3, telefono = $4,
-            localidad = $5, latitud = $6, longitud = $7, horario_atencion = $8,
-            horario_entrega = $9, vendedor_id = $10, vendedor_nombre = $11
-            ${zonaUpdate}
-            WHERE id = $12 RETURNING *`;
-
         const { rows } = await db.query(query, params);
         if (rows.length === 0) {
             return res.status(404).json({ message: 'Cliente no encontrado' });
