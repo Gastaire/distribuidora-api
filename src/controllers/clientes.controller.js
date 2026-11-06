@@ -57,6 +57,7 @@ const getClienteById = async (req, res) => {
 };
 
 const createCliente = async (req, res) => {
+  if (req.user.rol !== 'admin') req.body = { ...req.body, vendedor_id: req.user.id, vendedor_nombre: req.user.nombre };
   const { nombre_comercio, nombre_contacto, direccion, telefono, localidad, latitud, longitud, horario_atencion, horario_entrega, vendedor_id, vendedor_nombre } = req.body;
   
   // Calcular zona automáticamente desde GPS (si no fue definida manualmente)
@@ -95,7 +96,15 @@ const updateCliente = async (req, res) => {
         params.push(detectarZona(latitud, longitud));
         cambios.push(`zona = CASE WHEN zona_manual IS TRUE THEN zona ELSE $${params.length} END`);
     }
-    const query = `UPDATE clientes SET ${cambios.join(', ')} WHERE id = $1 RETURNING *`;
+    let ownerFilter = '';
+    if (req.user.rol !== 'admin') {
+        if ((Object.hasOwn(req.body, 'vendedor_id') && String(req.body.vendedor_id) !== String(req.user.id)) || Object.hasOwn(req.body, 'vendedor_nombre') && req.body.vendedor_nombre !== req.user.nombre) {
+            return res.status(403).json({ message: 'Solo un administrador puede reasignar clientes.' });
+        }
+        params.push(req.user.id);
+        ownerFilter = ` AND vendedor_id = $${params.length}`;
+    }
+    const query = `UPDATE clientes SET ${cambios.join(', ')} WHERE id = $1${ownerFilter} RETURNING *`;
     try {
         const { rows } = await db.query(query, params);
         if (rows.length === 0) {

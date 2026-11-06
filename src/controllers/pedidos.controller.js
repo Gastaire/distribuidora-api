@@ -58,9 +58,13 @@ const createPedido = async (req, res) => {
             }
         }
 
-        const clienteResult = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
+        const clienteResult = await client.query('SELECT id, vendedor_id FROM clientes WHERE id = $1 FOR SHARE', [cliente_id]);
         if (clienteResult.rows.length === 0) {
             throw new Error(`El cliente con id '${cliente_id}' no existe en el servidor.`);
+        }
+        if (req.user.rol !== 'admin' && String(clienteResult.rows[0].vendedor_id) !== String(usuario_id)) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: 'Solo el vendedor asignado puede tomar pedidos de este cliente.' });
         }
         final_cliente_id = cliente_id;
 
@@ -157,17 +161,22 @@ const updatePedido = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const pedidoOriginalResult = await client.query('SELECT * FROM pedidos WHERE id = $1', [pedido_id]);
+        const pedidoOriginalResult = await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [pedido_id]);
         if (pedidoOriginalResult.rows.length === 0) {
             await client.query('ROLLBACK');
-            client.release();
             return res.status(404).json({ message: 'Pedido no encontrado.' });
         }
         const pedidoOriginal = pedidoOriginalResult.rows[0];
+        if (rol !== 'admin') {
+            const assigned = await client.query('SELECT vendedor_id FROM clientes WHERE id = $1 FOR SHARE', [pedidoOriginal.cliente_id]);
+            if (String(assigned.rows[0]?.vendedor_id) !== String(usuario_id)) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: 'El cliente no está asignado a tu usuario.' });
+            }
+        }
 
         if (rol !== 'admin' && pedidoOriginal.usuario_id !== usuario_id) {
             await client.query('ROLLBACK');
-            client.release();
             return res.status(403).json({ message: 'No tienes permiso para editar este pedido.' });
         }
 
@@ -176,7 +185,6 @@ const updatePedido = async (req, res) => {
             const estadosEditables = ['pendiente', 'programado', 'visto'];
             if (!estadosEditables.includes(pedidoOriginal.estado)) {
                 await client.query('ROLLBACK');
-                client.release();
                 return res.status(403).json({ message: `No se puede editar un pedido que ya está en estado '${pedidoOriginal.estado}'.` });
             }
         }
@@ -196,6 +204,8 @@ const updatePedido = async (req, res) => {
             'UPDATE pedidos SET notas_entrega = $1, estado = $2, fecha_entrega_programada = $3, fecha_activacion = $4 WHERE id = $5',
             [notas_entrega || '', nuevoEstado, fecha_entrega_programada || null, nuevaFechaActivacion, pedido_id]
         );
+        const savedItems = await client.query('SELECT producto_id, precio_congelado FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
+        const savedPrices = new Map(savedItems.rows.map(item => [String(item.producto_id), item.precio_congelado]));
         await client.query('DELETE FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
 
         for (const item of items) {
@@ -204,7 +214,7 @@ const updatePedido = async (req, res) => {
              const { nombre, codigo_sku, precio_unitario, stock } = productoResult.rows[0];
              const avisoFaltante = (stock === 'No');
              const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, aviso_faltante, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6, $7)';
-             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, avisoFaltante, nombre, codigo_sku]);
+             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, savedPrices.get(String(item.producto_id)) ?? precio_unitario, avisoFaltante, nombre, codigo_sku]);
         }
         
         const accion = fecha_entrega_programada ? 'REPROGRAMAR_PEDIDO' : 'ACTUALIZAR_PEDIDO';
@@ -227,15 +237,34 @@ const updatePedido = async (req, res) => {
 
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
-    const { items } = req.body;
+    const { items, password } = req.body;
+    if (!Array.isArray(items) || !items.length || items.some(item => !Number.isFinite(Number(item.cantidad)) || Number(item.cantidad) <= 0)) {
+        return res.status(400).json({ message: 'Indicá productos y cantidades válidas.' });
+    }
+    const editingPrices = items.some(item => Object.hasOwn(item, 'precio_congelado'));
+    if (editingPrices) {
+        const account = await pool.query('SELECT password_hash, activo, rol FROM usuarios WHERE id = $1', [req.user.id]);
+        const admin = account.rows[0];
+        if (!admin || admin.activo === false || admin.rol !== 'admin' || typeof password !== 'string' || !await require('bcryptjs').compare(password, admin.password_hash)) {
+            return res.status(403).json({ message: 'Confirmá tu contraseña de administrador para editar precios.' });
+        }
+        if (items.some(item => Object.hasOwn(item, 'precio_congelado') && (item.precio_congelado === '' || item.precio_congelado == null || !Number.isFinite(Number(item.precio_congelado)) || Number(item.precio_congelado) < 0))) {
+            return res.status(400).json({ message: 'Los precios deben ser números mayores o iguales a cero.' });
+        }
+    }
     const { id: usuario_id, nombre: nombre_usuario } = req.user;
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
+        const locked = await client.query('SELECT id FROM pedidos WHERE id = $1 FOR UPDATE', [pedido_id]);
+        if (!locked.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Pedido no encontrado.' });
+        }
         const oldItemsResult = await client.query('SELECT * FROM pedido_items WHERE pedido_id = $1', [pedido_id]);
-        const oldItemsMap = new Map(oldItemsResult.rows.map(i => [i.producto_id, { cantidad: i.cantidad, nombre: i.nombre_producto }]));
+        const oldItemsMap = new Map(oldItemsResult.rows.map(i => [i.producto_id, { cantidad: i.cantidad, nombre: i.nombre_producto, precio: i.precio_congelado }]));
         
         let logDetail = `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`;
         const newItemsMap = new Map(items.map(i => [i.producto_id, i.cantidad]));
@@ -269,7 +298,12 @@ const updatePedidoItems = async (req, res) => {
              const { nombre, codigo_sku, precio_unitario } = productoResult.rows[0];
             
              const itemQuery = 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_congelado, nombre_producto, codigo_sku) VALUES ($1, $2, $3, $4, $5, $6)';
-             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, precio_unitario, nombre, codigo_sku]);
+             const previous = oldItemsMap.get(item.producto_id);
+             const price = Object.hasOwn(item, 'precio_congelado') ? Number(item.precio_congelado) : previous?.precio ?? precio_unitario;
+             if (Number(price) !== Number(previous?.precio ?? precio_unitario)) {
+                 logDetail += `- ${nombre}: precio unitario de ${previous?.precio ?? precio_unitario} a ${price}.\n`;
+             }
+             await client.query(itemQuery, [pedido_id, item.producto_id, item.cantidad, price, nombre, codigo_sku]);
         }
         
         if (logDetail.length > `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`.length) {
