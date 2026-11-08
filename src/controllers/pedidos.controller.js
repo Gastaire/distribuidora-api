@@ -788,6 +788,7 @@ const getHojaRuta = async (req, res, next) => {
                 c.nombre_comercio, 
                 c.direccion, 
                 c.localidad,
+                c.latitud, c.longitud,
                 CASE WHEN c.zona_manual IS TRUE THEN NULLIF(c.zona, '') END AS zona_operativa,
                 c.horario_atencion,
                 c.horario_recepcion,
