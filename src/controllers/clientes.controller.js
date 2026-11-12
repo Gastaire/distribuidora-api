@@ -1,3 +1,4 @@
+const {readReceipt, writeReceipt} = require('../services/syncReceipt');
 const db = require('../db');
 
 // ============================================================
@@ -63,15 +64,27 @@ const createCliente = async (req, res) => {
   // Calcular zona automáticamente desde GPS (si no fue definida manualmente)
   const zona = detectarZona(latitud, longitud);
 
+  const client = await db.pool.connect();
   try {
-    const { rows } = await db.query(
+    await client.query('BEGIN');
+    const receipt = await readReceipt(client, req, 'SYNC_CLIENTE');
+    if (receipt) {
+      await client.query('COMMIT');
+      return res.status(200).json(receipt);
+    }
+    const { rows } = await client.query(
       'INSERT INTO clientes (nombre_comercio, nombre_contacto, direccion, telefono, localidad, latitud, longitud, horario_atencion, horario_entrega, vendedor_id, vendedor_nombre, zona, zona_manual) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *',
       [nombre_comercio, nombre_contacto, direccion, telefono, localidad || null, latitud || null, longitud || null, horario_atencion || null, horario_entrega || null, vendedor_id || null, vendedor_nombre || null, zona, false]
     );
+    await writeReceipt(client, req, 'SYNC_CLIENTE', rows[0]);
+    await client.query('COMMIT');
     res.status(201).json(rows[0]);
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error al crear cliente:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
+    res.status(error.status || 500).json({ message: error.status ? error.message : 'Error interno del servidor', ...(error.existing_id ? {existing_id:error.existing_id} : {}) });
+  } finally {
+    client.release();
   }
 };
 

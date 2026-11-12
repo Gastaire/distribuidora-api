@@ -1,3 +1,4 @@
+const {readReceipt, writeReceipt} = require('../services/syncReceipt');
 const { pool } = require('../db');
 const fs = require('fs/promises');
 const path = require('path');
@@ -44,6 +45,11 @@ const createPedido = async (req, res) => {
 
     try {
         await client.query('BEGIN');
+        const receipt = await readReceipt(client, req, 'SYNC_PEDIDO');
+        if (receipt) {
+            await client.query('COMMIT');
+            return res.status(200).json(receipt);
+        }
         
         const isLegacyRequest = !lista_precios_id;
         let final_lista_precios_id = lista_precios_id || null;
@@ -127,6 +133,7 @@ const createPedido = async (req, res) => {
         const logDetail = `El usuario ${nombre_usuario} creó el pedido #${nuevoPedidoId} usando la lista de precios ID ${final_lista_precios_id || 'ninguna (legacy)'}.`;
         await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CREAR_PEDIDO', logDetail]);
 
+        await writeReceipt(client, req, 'SYNC_PEDIDO', {message:'Pedido creado exitosamente', pedido_id:nuevoPedidoId});
         await client.query('COMMIT');
 
         try {
@@ -142,7 +149,7 @@ const createPedido = async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error al crear pedido (transacción revertida):', error);
-        res.status(500).json({ message: error.message || 'Error interno del servidor al crear el pedido.' });
+        res.status(error.status || 500).json({ message: error.message || 'Error interno del servidor al crear el pedido.', ...(error.existing_id ? {existing_id:error.existing_id} : {}) });
     } finally {
         client.release();
     }

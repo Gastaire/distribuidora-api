@@ -14,7 +14,7 @@ const query = async (sql, params) => {
 const moduleMock = {exports: {}};
 vm.runInNewContext(fs.readFileSync('src/controllers/pedidos.controller.js', 'utf8'), {
     module: moduleMock, __dirname: '/tmp', console,
-    require: name => name === '../db' ? {pool: {query, connect: async () => ({query, release() {}})}} : name === 'bcryptjs' ? {compare: async password => password === 'correct'} : require(name)
+    require: name => name === '../services/syncReceipt' ? require('../src/services/syncReceipt') : name === '../db' ? {pool: {query, connect: async () => ({query, release() {}})}} : name === 'bcryptjs' ? {compare: async password => password === 'correct'} : require(name)
 });
 const run = async (method, body, user = {id: 1, nombre: 'QA', rol: 'admin'}) => {
     calls.length = 0;
