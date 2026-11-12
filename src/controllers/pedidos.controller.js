@@ -157,7 +157,7 @@ const createPedido = async (req, res) => {
 
 const updatePedido = async (req, res) => {
     const { id: pedido_id } = req.params;
-    const { items, notas_entrega, fecha_entrega_programada } = req.body;
+    const { items, notas_entrega, fecha_entrega_programada, cliente_id, password } = req.body;
     const { id: usuario_id, nombre: nombre_usuario, rol } = req.user;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -174,15 +174,31 @@ const updatePedido = async (req, res) => {
             return res.status(404).json({ message: 'Pedido no encontrado.' });
         }
         const pedidoOriginal = pedidoOriginalResult.rows[0];
-        if (rol !== 'admin') {
-            const assigned = await client.query('SELECT vendedor_id FROM clientes WHERE id = $1 FOR SHARE', [pedidoOriginal.cliente_id]);
-            if (String(assigned.rows[0]?.vendedor_id) !== String(usuario_id)) {
+        const changingClient = Object.hasOwn(req.body, 'cliente_id') && String(cliente_id) !== String(pedidoOriginal.cliente_id);
+        if (changingClient && (!Number.isSafeInteger(Number(cliente_id)) || Number(cliente_id) <= 0)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({message:'Seleccioná un cliente válido.'});
+        }
+        if (changingClient && rol !== 'admin' && pedidoOriginal.estado !== 'pendiente') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({message:'Solo podés cambiar el cliente mientras el pedido esté pendiente.'});
+        }
+        if (changingClient && rol === 'admin') {
+            const account = await client.query('SELECT password_hash, activo, rol FROM usuarios WHERE id = $1', [usuario_id]);
+            const admin = account.rows[0];
+            if (!admin || admin.activo === false || admin.rol !== 'admin' || typeof password !== 'string' || !await require('bcryptjs').compare(password, admin.password_hash)) {
                 await client.query('ROLLBACK');
-                return res.status(403).json({ message: 'El cliente no está asignado a tu usuario.' });
+                return res.status(403).json({message:'Confirmá tu contraseña de administrador para cambiar el cliente.'});
             }
         }
+        const targetClientId = changingClient ? cliente_id : pedidoOriginal.cliente_id;
+        const assigned = await client.query('SELECT id, vendedor_id, nombre_comercio FROM clientes WHERE id = $1 FOR SHARE', [targetClientId]);
+        if (!assigned.rows.length || (rol !== 'admin' && String(assigned.rows[0].vendedor_id) !== String(usuario_id))) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({message:'Seleccioná un cliente existente asignado a tu usuario.'});
+        }
 
-        if (rol !== 'admin' && pedidoOriginal.usuario_id !== usuario_id) {
+        if (rol !== 'admin' && String(pedidoOriginal.usuario_id) !== String(usuario_id)) {
             await client.query('ROLLBACK');
             return res.status(403).json({ message: 'No tienes permiso para editar este pedido.' });
         }
@@ -206,6 +222,10 @@ const updatePedido = async (req, res) => {
             nuevaFechaActivacion = entrega.toISOString();
         }
 
+        if (changingClient) {
+            await client.query('UPDATE pedidos SET cliente_id = $1 WHERE id = $2', [cliente_id, pedido_id]);
+            await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [usuario_id, nombre_usuario, 'CAMBIAR_CLIENTE_PEDIDO', `Pedido #${pedido_id}: cliente de ID ${pedidoOriginal.cliente_id} a ${assigned.rows[0].nombre_comercio} (ID ${cliente_id}).`]);
+        }
         // Actualizar estado, notas, programación
         await client.query(
             'UPDATE pedidos SET notas_entrega = $1, estado = $2, fecha_entrega_programada = $3, fecha_activacion = $4 WHERE id = $5',
@@ -242,18 +262,51 @@ const updatePedido = async (req, res) => {
     }
 };
 
+// Reassign without replacing items, frozen prices, notes or delivery scheduling.
+const updatePedidoCliente = async (req, res, next) => {
+    const {cliente_id, password} = req.body;
+    if (!Number.isSafeInteger(Number(cliente_id)) || Number(cliente_id) <= 0) return res.status(400).json({message:'Seleccioná un cliente válido.'});
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const order = (await client.query('SELECT * FROM pedidos WHERE id = $1 FOR UPDATE', [req.params.id])).rows[0];
+        if (!order) { await client.query('ROLLBACK'); return res.status(404).json({message:'Pedido no encontrado.'}); }
+        if (req.user.rol !== 'admin' && (String(order.usuario_id) !== String(req.user.id) || order.estado !== 'pendiente')) {
+            await client.query('ROLLBACK'); return res.status(403).json({message:'Solo podés cambiar el cliente de tus pedidos pendientes.'});
+        }
+        if (req.user.rol === 'admin') {
+            const admin = (await client.query('SELECT password_hash, activo, rol FROM usuarios WHERE id = $1', [req.user.id])).rows[0];
+            if (!admin || admin.activo === false || admin.rol !== 'admin' || typeof password !== 'string' || !await require('bcryptjs').compare(password,admin.password_hash)) {
+                await client.query('ROLLBACK'); return res.status(403).json({message:'Confirmá tu contraseña de administrador.'});
+            }
+        }
+        const customer = (await client.query('SELECT id, vendedor_id, nombre_comercio FROM clientes WHERE id = $1 FOR SHARE', [cliente_id])).rows[0];
+        if (!customer || (req.user.rol !== 'admin' && String(customer.vendedor_id) !== String(req.user.id))) {
+            await client.query('ROLLBACK'); return res.status(403).json({message:'Seleccioná un cliente existente asignado a tu usuario.'});
+        }
+        if (String(order.cliente_id) !== String(cliente_id)) {
+            await client.query('UPDATE pedidos SET cliente_id = $1 WHERE id = $2', [cliente_id,order.id]);
+            await client.query('INSERT INTO actividad (id_usuario, nombre_usuario, accion, detalle) VALUES ($1, $2, $3, $4)', [req.user.id,req.user.nombre,'CAMBIAR_CLIENTE_PEDIDO',`Pedido #${order.id}: cliente de ID ${order.cliente_id} a ${customer.nombre_comercio} (ID ${cliente_id}).`]);
+        }
+        await client.query('COMMIT');
+        res.json({pedido_id:order.id, estado:order.estado, message:'Cliente del pedido actualizado.'});
+    } catch (error) {await client.query('ROLLBACK');next(error);}
+    finally {client.release();}
+};
+
 const updatePedidoItems = async (req, res) => {
     const { id: pedido_id } = req.params;
-    const { items, password } = req.body;
+    const { items, password, cliente_id } = req.body;
     if (!Array.isArray(items) || !items.length || items.some(item => !Number.isFinite(Number(item.cantidad)) || Number(item.cantidad) <= 0)) {
         return res.status(400).json({ message: 'Indicá productos y cantidades válidas.' });
     }
     const editingPrices = items.some(item => Object.hasOwn(item, 'precio_congelado'));
-    if (editingPrices) {
+    const changingClient = Object.hasOwn(req.body, 'cliente_id');
+    if (editingPrices || changingClient) {
         const account = await pool.query('SELECT password_hash, activo, rol FROM usuarios WHERE id = $1', [req.user.id]);
         const admin = account.rows[0];
         if (!admin || admin.activo === false || admin.rol !== 'admin' || typeof password !== 'string' || !await require('bcryptjs').compare(password, admin.password_hash)) {
-            return res.status(403).json({ message: 'Confirmá tu contraseña de administrador para editar precios.' });
+            return res.status(403).json({ message: 'Confirmá tu contraseña de administrador para editar precios o cambiar el cliente.' });
         }
         if (items.some(item => Object.hasOwn(item, 'precio_congelado') && (item.precio_congelado === '' || item.precio_congelado == null || !Number.isFinite(Number(item.precio_congelado)) || Number(item.precio_congelado) < 0))) {
             return res.status(400).json({ message: 'Los precios deben ser números mayores o iguales a cero.' });
@@ -265,7 +318,7 @@ const updatePedidoItems = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        const locked = await client.query('SELECT id FROM pedidos WHERE id = $1 FOR UPDATE', [pedido_id]);
+        const locked = await client.query('SELECT id, cliente_id FROM pedidos WHERE id = $1 FOR UPDATE', [pedido_id]);
         if (!locked.rows.length) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Pedido no encontrado.' });
@@ -274,6 +327,21 @@ const updatePedidoItems = async (req, res) => {
         const oldItemsMap = new Map(oldItemsResult.rows.map(i => [i.producto_id, { cantidad: i.cantidad, nombre: i.nombre_producto, precio: i.precio_congelado }]));
         
         let logDetail = `El usuario ${nombre_usuario} modificó el pedido #${pedido_id}:\n`;
+        if (changingClient) {
+            if (!Number.isSafeInteger(Number(cliente_id)) || Number(cliente_id) <= 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({message:'Seleccioná un cliente válido.'});
+            }
+            const customer = await client.query('SELECT id, nombre_comercio FROM clientes WHERE id = $1 FOR SHARE', [cliente_id]);
+            if (!customer.rows.length) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({message:'El cliente seleccionado ya no existe.'});
+            }
+            if (String(locked.rows[0].cliente_id) !== String(cliente_id)) {
+                await client.query('UPDATE pedidos SET cliente_id = $1 WHERE id = $2', [cliente_id,pedido_id]);
+                logDetail += `- Cliente cambió de ID ${locked.rows[0].cliente_id} a ${customer.rows[0].nombre_comercio} (ID ${cliente_id}).\n`;
+            }
+        }
         const newItemsMap = new Map(items.map(i => [i.producto_id, i.cantidad]));
 
         const todosLosProductosIds = new Set([...oldItemsMap.keys(), ...newItemsMap.keys()]);
@@ -822,6 +890,7 @@ const getHojaRuta = async (req, res, next) => {
 };
 
 module.exports = {
+    updatePedidoCliente,
     createPedido,
     getPedidos,
     getMisPedidos,

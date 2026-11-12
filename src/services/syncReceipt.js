@@ -24,6 +24,7 @@ const readReceipt = async (client, req, kind) => {
     );
     if (!rows.length) return null;
     const saved = JSON.parse(rows[0].detalle.slice(key.length + 1));
+    if (kind === 'SYNC_PEDIDO' && saved.result.rescatado) return saved.result;
     if (saved.fingerprint !== fingerprint(req)) {
         const error = new Error('El envío anterior ya fue confirmado. Se recuperó su número. Volvé a sincronizar para aplicar los cambios pendientes.');
         error.status = 409;

@@ -7,7 +7,7 @@ const { pool } = require('../db');
 const getLogs = async (req, res) => {
     try {
         // CORRECCIÓN: Se cambió el nombre de la tabla de 'logs' a 'actividad'.
-        const query = 'SELECT id, accion, detalle, nombre_usuario, fecha_creacion FROM actividad ORDER BY fecha_creacion DESC LIMIT 200';
+        const query = "SELECT id, accion, detalle, nombre_usuario, fecha_creacion FROM actividad WHERE accion NOT IN ('PEDIDO_RESCATADO', 'SYNC_PEDIDO', 'SYNC_CLIENTE') ORDER BY fecha_creacion DESC LIMIT 200";
         
         const result = await pool.query(query);
         

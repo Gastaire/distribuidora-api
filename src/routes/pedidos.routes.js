@@ -1,5 +1,7 @@
+const {rescuePedido,getRescates,recoverRescate} = require('../controllers/rescates.controller');
 const { Router } = require('express');
 const {
+    updatePedidoCliente,
     createPedido,
     getPedidos,
     getMisPedidos,
@@ -23,6 +25,10 @@ const { protect, authorize } = require('../middleware/auth.middleware');
 const router = Router();
 
 
+router.post('/pedidos/rescates', protect, authorize('vendedor', 'admin'), rescuePedido);
+router.post('/pedidos/rescates/:id/recuperar', protect, authorize('admin'), recoverRescate);
+router.get('/pedidos/rescates', protect, authorize('admin'), getRescates);
+
 router.post('/pedidos', protect, authorize('vendedor', 'admin'), createPedido);
 router.get('/pedidos', protect, getPedidos);
 
@@ -40,6 +46,7 @@ router.get('/pedidos/hoja-ruta', protect, authorize('admin', 'deposito'), getHoj
 router.get('/pedidos/:id', protect, getPedidoById);
 router.put('/pedidos/:id/estado', protect, authorize('admin', 'deposito'), updatePedidoEstado);
 router.put('/pedidos/:id/items', protect, authorize('admin'), updatePedidoItems);
+router.put('/pedidos/:id/cliente', protect, authorize('vendedor', 'admin'), updatePedidoCliente);
 router.put('/pedidos/:id', protect, authorize('vendedor', 'admin'), updatePedido);
 router.put('/pedidos/:id/archive', protect, authorize('admin'), archivePedido);
 router.delete('/pedidos/cleanup-archived', protect, authorize('admin'), cleanupArchivedPedidos);
